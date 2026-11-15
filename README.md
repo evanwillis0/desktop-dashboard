@@ -35,7 +35,17 @@ python3 -m venv .venv
 cd backend && ../.venv/bin/python -m dashboard.setup_canvas
 ```
 
-## Run the server
+## Start at login
+
+```bash
+scripts/install_login.sh
+```
+
+Installs two launchd agents: the server runs in the background (restarted if it crashes), and at
+each login `scripts/at_login.sh` opens Übersicht and hides reopened apps (they stay open; click in
+the Dock to bring one back). Logs: `~/Library/Logs/desktop-dashboard/`. Undo with `scripts/uninstall_login.sh`.
+
+## Run the server manually
 
 ```bash
 cd backend && ../.venv/bin/python -m dashboard.server

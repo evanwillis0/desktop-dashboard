@@ -219,7 +219,9 @@ export const render = ({ data, offline, refreshing }, dispatch) => {
     return (
       <div style={styles.card}>
         <div style={styles.title}>Dashboard server isn't running</div>
-        <div style={{ ...styles.empty, marginTop: 6 }}>Start it with: python -m dashboard.server</div>
+        <div style={{ ...styles.empty, marginTop: 6 }}>
+          It starts at login. If it's stuck, check ~/Library/Logs/desktop-dashboard/server.log
+        </div>
       </div>
     );
   }
