@@ -32,7 +32,11 @@ const refreshNow = async (dispatch) => {
   }
 };
 
-export const initialState = { data: null, offline: false, refreshing: false, gmailTab: null, calendarOffset: 0 };
+// Note: Übersicht keeps old state when the code changes, so new fields here may be
+// missing at runtime; every component must cope with them being undefined.
+export const initialState = {
+  data: null, offline: false, refreshing: false, gmailTab: null, calendarOffset: 0, piazzaTab: null,
+};
 
 export const updateState = (event, previous) => {
   switch (event.type) {
@@ -45,6 +49,8 @@ export const updateState = (event, previous) => {
       return { ...previous, refreshing: true };
     case "SELECT_GMAIL_TAB":
       return { ...previous, gmailTab: event.label };
+    case "SELECT_PIAZZA_TAB":
+      return { ...previous, piazzaTab: event.id };
     case "SET_CALENDAR_OFFSET":
       return { ...previous, calendarOffset: event.offset };
     default:
@@ -64,6 +70,7 @@ const CHROME_PROFILE = {
   github: "Default",
   calendar: "Profile 1",
   gradescope: "Profile 1",
+  piazza: "Profile 1",
 };
 
 const shellQuote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
@@ -206,7 +213,7 @@ const GitHubCard = ({ source, refreshing, onRefresh }) => {
   const data = (source && source.data) || {};
   const notifications = data.notifications || [];
   const pullRequests = data.pull_requests || [];
-  const repos = data.repos || [];
+  const repos = (data.repos || []).slice(0, 2);  // two keeps the left column clear of the Dock
   const loading = source && source.status === "pending";
 
   return (
@@ -475,7 +482,7 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
           {!account.error && account.messages.length === 0 && (
             <div style={styles.allClear}>✓ No mail in the last 7 days</div>
           )}
-          {account.messages.map((m) => (
+          {account.messages.slice(0, 5).map((m) => (
             <div
               key={m.url}
               style={{ ...styles.item, borderLeft: `3px solid ${m.unread ? GITHUB_BLUE : "rgba(255,255,255,0.15)"}` }}
@@ -499,11 +506,62 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
   );
 };
 
+// ----- Piazza -----
+
+const PIAZZA_POSTS = 4;
+const INSTRUCTOR_AMBER = "#ffb547";
+
+const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
+  const classes = (source && source.data && source.data.classes) || [];
+  // `selected` may be undefined (fresh state) or a class that's gone: fall back to the first.
+  const current = classes.find((c) => c.id === selected) || classes[0];
+  const posts = current ? current.posts.slice(0, PIAZZA_POSTS) : [];
+
+  return (
+    <Card title="Piazza" source={source} refreshing={refreshing} onRefresh={onRefresh} width={390}>
+      {!current && <div style={styles.empty}>{source && source.status === "pending" ? "Loading…" : "No active classes"}</div>}
+      {current && (
+        <div>
+          <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+            {classes.map((c) => (
+              <div key={c.id} style={tabStyle(c === current)} onClick={() => onSelect(c.id)} title={c.name}>
+                {courseLabel(courseKey(c.name))}
+                {c.unread > 0 && <span style={badgeStyle}>{c.unread_capped ? `${c.unread}+` : c.unread}</span>}
+              </div>
+            ))}
+          </div>
+          {posts.map((p) => (
+            <div key={p.id}
+                 style={{ ...styles.item,
+                          borderLeft: `3px solid ${p.instructor ? INSTRUCTOR_AMBER : p.unread ? GITHUB_BLUE : "rgba(255,255,255,0.15)"}` }}
+                 onClick={() => openLink(p.url, "piazza")} title={p.snippet}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ ...styles.itemTitle, ...styles.oneLine, fontWeight: p.unread ? 650 : 400 }}>
+                  {p.pinned && "📌 "}
+                  {p.instructor && pill("INSTRUCTOR", "#b7791f")}
+                  {p.unanswered && pill("UNANSWERED", "#c2410c")}
+                  {p.subject}
+                </span>
+                <span style={{ ...styles.itemDue, flexShrink: 0 }}>{p.updated ? timeAgo(p.updated) : ""}</span>
+              </div>
+              <div style={{ ...styles.itemDue, ...styles.oneLine }}>{p.snippet}</div>
+            </div>
+          ))}
+          <div style={{ ...styles.meta, justifyContent: "flex-end", cursor: "pointer", marginTop: 2 }}
+               onClick={() => openLink(current.url, "piazza")}>
+            open {courseLabel(courseKey(current.name))} on Piazza ↗
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+};
+
 // ----- Calendar (time grid) -----
 
 const CAL_DAYS = 3; // columns shown at once
 const CAL_MAX_OFFSET = 7 - CAL_DAYS; // the server sends 7 days of events
-const PX_PER_HOUR = 34;
+const PX_PER_HOUR = 25;
 const GUTTER = 38; // width of the hour labels on the left
 const HOUR_MS = 3600000;
 
@@ -717,14 +775,14 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
 
 // Where the dashboard sits on the desktop, and its base text style.
 export const className = `
-  top: 48px;
+  top: 40px;
   left: 48px;
   color: #f2f3f5;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   -webkit-font-smoothing: antialiased;
 `;
 
-export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, dispatch) => {
+export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, piazzaTab }, dispatch) => {
   const onRefresh = () => refreshNow(dispatch);
   const column = { display: "flex", flexDirection: "column", gap: 16 };
 
@@ -740,7 +798,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, 
   }
 
   return (
-    // Three columns: what's on today | what's due + code | mail.
+    // Three columns: schedule + code | coursework | messages.
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
       <div style={column}>
         <CalendarCard
@@ -750,6 +808,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, 
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
+        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
       </div>
       <div style={column}>
         <CourseworkCard
@@ -767,7 +826,13 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, 
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
-        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
+        <PiazzaCard
+          source={data && data.piazza}
+          selected={piazzaTab}
+          onSelect={(id) => dispatch({ type: "SELECT_PIAZZA_TAB", id })}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
       </div>
     </div>
   );
