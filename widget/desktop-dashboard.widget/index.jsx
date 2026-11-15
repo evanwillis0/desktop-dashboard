@@ -120,27 +120,58 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // ---------- Styles ----------
 
+// Panel theme: glossy near-white panels with dark text.
+const INK = "#1c1e22"; // main text
+const INK_SOFT = "rgba(28, 30, 34, 0.62)"; // secondary text (dates, previews)
+const INK_FAINT = "rgba(28, 30, 34, 0.45)"; // labels, hour marks
+const LINE = "rgba(28, 30, 34, 0.08)"; // grid lines, dividers
+const TILE = "rgba(28, 30, 34, 0.05)"; // item rows on a panel
+const TILE_ACTIVE = "rgba(28, 30, 34, 0.1)"; // selected tab, buttons
+const NEUTRAL_EDGE = "rgba(28, 30, 34, 0.18)"; // row edge when nothing is urgent
+const OK_GREEN = "#15803d"; // readable green on white
+const WARN_AMBER = "#b45309"; // readable amber on white
+const TODAY_RED = "#e5484d";
+
 const styles = {
   card: {
+    position: "relative",
+    overflow: "hidden",
     width: 340,
     padding: "16px 18px",
     borderRadius: 16,
-    background: "rgba(20, 22, 28, 0.62)",
+    color: INK,
+    background: "linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(241,243,246,0.94) 55%, rgba(228,231,236,0.93) 100%)",
     backdropFilter: "blur(24px) saturate(140%)",
     WebkitBackdropFilter: "blur(24px) saturate(140%)",
-    border: "1px solid rgba(255, 255, 255, 0.08)",
-    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.25)",
+    border: "1px solid rgba(255, 255, 255, 0.85)",
+    boxShadow: [
+      "inset 0 1px 0 rgba(255,255,255,1)", // bright top edge
+      "inset 0 -1px 0 rgba(0,0,0,0.06)", // soft bottom edge
+      "0 14px 34px rgba(0,0,0,0.30)", // lift off the wallpaper
+      "0 2px 6px rgba(0,0,0,0.14)",
+    ].join(", "),
   },
+  // The gloss: a soft white sheen over the top half of the panel.
+  gloss: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "52%",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.75) 0%, rgba(255,255,255,0.18) 60%, rgba(255,255,255,0) 100%)",
+    pointerEvents: "none",
+  },
+  content: { position: "relative" }, // sits above the gloss
   header: { display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 12 },
-  title: { fontSize: 15, fontWeight: 600, letterSpacing: 0.2 },
-  meta: { fontSize: 11, color: "rgba(255,255,255,0.5)", display: "flex", gap: 8, alignItems: "center" },
-  refresh: { cursor: "pointer", fontSize: 13, color: "rgba(255,255,255,0.6)", userSelect: "none" },
+  title: { fontSize: 15, fontWeight: 650, letterSpacing: 0.2 },
+  meta: { fontSize: 11, color: INK_FAINT, display: "flex", gap: 8, alignItems: "center" },
+  refresh: { cursor: "pointer", fontSize: 13, color: INK_SOFT, userSelect: "none" },
   course: {
     fontSize: 11,
-    fontWeight: 600,
+    fontWeight: 650,
     textTransform: "uppercase",
     letterSpacing: 0.8,
-    color: "rgba(255,255,255,0.55)",
+    color: INK_SOFT,
     margin: "12px 0 6px",
   },
   item: {
@@ -150,21 +181,23 @@ const styles = {
     padding: "7px 10px",
     marginBottom: 6,
     borderRadius: 8,
-    background: "rgba(255,255,255,0.04)",
+    background: TILE,
     cursor: "pointer",
   },
-  itemTitle: { fontSize: 13, fontWeight: 500 },
-  itemDue: { fontSize: 11.5, color: "rgba(255,255,255,0.6)" },
+  itemTitle: { fontSize: 13, fontWeight: 550 },
+  itemDue: { fontSize: 11.5, color: INK_SOFT },
   oneLine: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  allClear: { fontSize: 12.5, color: "#7fd49b" },
-  warning: { fontSize: 11.5, color: "#ffb547", marginTop: 8 },
-  empty: { fontSize: 13, color: "rgba(255,255,255,0.6)" },
+  allClear: { fontSize: 12.5, color: OK_GREEN },
+  warning: { fontSize: 11.5, color: WARN_AMBER, marginTop: 8 },
+  empty: { fontSize: 13, color: INK_SOFT },
 };
 
 // ---------- Cards ----------
 
 const Card = ({ title, source, refreshing, onRefresh, children, width }) => (
   <div style={{ ...styles.card, ...(width ? { width } : {}) }}>
+    <div style={styles.gloss} />
+    <div style={styles.content}>
     <div style={styles.header}>
       <div style={styles.title}>{title}</div>
       <div style={styles.meta}>
@@ -176,6 +209,7 @@ const Card = ({ title, source, refreshing, onRefresh, children, width }) => (
     {source && source.status === "error" && (
       <div style={styles.warning}>⚠ Couldn't refresh: {source.error}</div>
     )}
+    </div>
   </div>
 );
 
@@ -248,7 +282,7 @@ const GitHubCard = ({ source, refreshing, onRefresh, width }) => {
       {repos.map((repo) => (
         <Row
           key={repo.url}
-          color={repo.ci === "failing" ? "#ff6b6b" : "rgba(255,255,255,0.25)"}
+          color={repo.ci === "failing" ? "#ff6b6b" : NEUTRAL_EDGE}
           title={repoName(repo.name)}
           details={[
             // Short facts first so a long commit message can't push them out of view.
@@ -407,7 +441,7 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh 
       {scores.map((s) => (
         <Row
           key={s.key}
-          color="rgba(255,255,255,0.25)"
+          color={NEUTRAL_EDGE}
           title={<span>{s.fresh && pill("GRADED", "#16a34a")}{s.title}</span>}
           details={`${courseLabel(s.course)} · ${SOURCE_NAMES[s.source]} · ${scoreText(s)}`}
           onClick={() => openLink(s.url, s.source)}
@@ -437,8 +471,8 @@ const tabStyle = (active) => ({
   whiteSpace: "nowrap",
   fontWeight: active ? 600 : 500,
   cursor: "pointer",
-  color: active ? "#fff" : "rgba(255,255,255,0.6)",
-  background: active ? "rgba(255,255,255,0.12)" : "transparent",
+  color: active ? INK : INK_SOFT,
+  background: active ? TILE_ACTIVE : "transparent",
 });
 
 const badgeStyle = {
@@ -464,7 +498,7 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
               <div key={a.label} style={tabStyle(a === account)} onClick={() => onSelect(a.label)} title={a.email}>
                 {a.name}
                 {a.unread_recent > 0 && <span style={badgeStyle}>{badgeText(a.unread_recent)}</span>}
-                {a.error && <span style={{ color: "#ffb547" }}>⚠</span>}
+                {a.error && <span style={{ color: WARN_AMBER }}>⚠</span>}
               </div>
             ))}
           </div>
@@ -485,7 +519,7 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
           {account.messages.slice(0, 5).map((m) => (
             <div
               key={`${m.url}-${m.received_at}`}  // two emails in one conversation share a URL
-              style={{ ...styles.item, borderLeft: `3px solid ${m.unread ? GITHUB_BLUE : "rgba(255,255,255,0.15)"}` }}
+              style={{ ...styles.item, borderLeft: `3px solid ${m.unread ? GITHUB_BLUE : NEUTRAL_EDGE}` }}
               onClick={() => openInProfile(m.url, account.chrome_profile)}
               title={m.snippet}
             >
@@ -494,7 +528,7 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
                 <span style={{ ...styles.itemDue, flexShrink: 0 }}>{timeAgo(m.received_at)}</span>
               </div>
               <div style={{ ...styles.oneLine, fontSize: 12.5, fontWeight: m.unread ? 550 : 400,
-                            color: m.unread ? "#f2f3f5" : "rgba(255,255,255,0.7)" }}>
+                            color: m.unread ? INK : INK_SOFT }}>
                 {m.subject}
               </div>
               <div style={{ ...styles.itemDue, ...styles.oneLine }}>{m.snippet}</div>
@@ -614,7 +648,7 @@ const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
           {posts.map((p) => (
             <div key={p.id}
                  style={{ ...styles.item,
-                          borderLeft: `3px solid ${p.instructor ? INSTRUCTOR_AMBER : p.unread ? GITHUB_BLUE : "rgba(255,255,255,0.15)"}` }}
+                          borderLeft: `3px solid ${p.instructor ? INSTRUCTOR_AMBER : p.unread ? GITHUB_BLUE : NEUTRAL_EDGE}` }}
                  onClick={() => openLink(p.url, "piazza")} title={p.snippet}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                 <span style={{ ...styles.itemTitle, ...styles.oneLine, fontWeight: p.unread ? 650 : 400 }}>
@@ -736,7 +770,7 @@ const navButton = {
   cursor: "pointer",
   padding: "2px 8px",
   borderRadius: 6,
-  background: "rgba(255,255,255,0.08)",
+  background: TILE_ACTIVE,
   fontSize: 12,
   userSelect: "none",
 };
@@ -797,9 +831,9 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
           const isToday = daysUntil(day) === 0;
           return (
             <div key={day} style={{ flex: 1, textAlign: "center", paddingBottom: 6 }}>
-              <div style={{ fontSize: 11, color: isToday ? "#ff8a80" : "rgba(255,255,255,0.55)", fontWeight: 600,
+              <div style={{ fontSize: 11, color: isToday ? TODAY_RED : INK_SOFT, fontWeight: 600,
                             textTransform: "uppercase", letterSpacing: 0.6 }}>{weekday}</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: isToday ? "#ff8a80" : "#f2f3f5" }}>{date}</div>
+              <div style={{ fontSize: 18, fontWeight: 600, color: isToday ? TODAY_RED : INK }}>{date}</div>
             </div>
           );
         })}
@@ -831,8 +865,8 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
         {hours.map((h) => (
           <div key={h} style={{ position: "absolute", top: (h - firstHour) * PX_PER_HOUR, left: 0, right: 0 }}>
             <div style={{ position: "absolute", left: 0, width: GUTTER - 6, top: -6, textAlign: "right",
-                          fontSize: 10, color: "rgba(255,255,255,0.45)" }}>{h < lastHour ? hourLabel(h) : ""}</div>
-            <div style={{ marginLeft: GUTTER, borderTop: "1px solid rgba(255,255,255,0.07)" }} />
+                          fontSize: 10, color: INK_FAINT }}>{h < lastHour ? hourLabel(h) : ""}</div>
+            <div style={{ marginLeft: GUTTER, borderTop: `1px solid ${LINE}` }} />
           </div>
         ))}
 
@@ -841,7 +875,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
             const isToday = daysUntil(day) === 0;
             const nowTop = topFor(now, day);
             return (
-              <div key={day} style={{ flex: 1, position: "relative", borderLeft: "1px solid rgba(255,255,255,0.07)" }}>
+              <div key={day} style={{ flex: 1, position: "relative", borderLeft: `1px solid ${LINE}` }}>
                 {timed.map((it) => {
                   const top = topFor(it.start, day);
                   const height = Math.max(16, topFor(it.end, day) - top - 2);
@@ -869,7 +903,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
                     >
                       <div style={{ ...styles.oneLine, fontSize: 11, fontWeight: 600, lineHeight: "14px" }}>{it.e.title}</div>
                       {height >= 30 && (
-                        <div style={{ ...styles.oneLine, fontSize: 10, lineHeight: "13px", color: "rgba(255,255,255,0.75)" }}>
+                        <div style={{ ...styles.oneLine, fontSize: 10, lineHeight: "13px", color: INK_SOFT }}>
                           {clock(it.start)}{it.e.location ? ` · ${it.e.location}` : ""}
                         </div>
                       )}
@@ -913,6 +947,8 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
 
 // ---------- Layout ----------
 
+const HALLWAY_ANGLE = 7; // degrees the side columns turn toward the middle (subtle)
+
 // Where the dashboard sits on the desktop, and its base text style.
 export const className = `
   top: 40px;
@@ -923,13 +959,17 @@ export const className = `
 
   /* Thin, subtle scrollbar for the calendar's scrolling grid */
   #dd-cal-scroll::-webkit-scrollbar { width: 5px; }
-  #dd-cal-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 3px; }
+  #dd-cal-scroll::-webkit-scrollbar-thumb { background: rgba(28, 30, 34, 0.25); border-radius: 3px; }
   #dd-cal-scroll::-webkit-scrollbar-track { background: transparent; }
 `;
 
 export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, piazzaTab }, dispatch) => {
   const onRefresh = () => refreshNow(dispatch);
   const column = { display: "flex", flexDirection: "column", gap: 16 };
+  // Hallway effect: the side columns turn slightly toward the middle, like walls you're
+  // looking down. Each pivots on its outer edge, so its inner edge recedes.
+  const leftWall = { ...column, transform: `rotateY(${HALLWAY_ANGLE}deg)`, transformOrigin: "left center" };
+  const rightWall = { ...column, transform: `rotateY(-${HALLWAY_ANGLE}deg)`, transformOrigin: "right center" };
 
   if (offline && !data) {
     return (
@@ -944,8 +984,9 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
 
   return (
     // Three columns: coursework + GitHub | calendar + center circle | messages.
-    <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-      <div style={column}>
+    // `perspective` gives the side columns' rotation real depth (smaller = stronger effect).
+    <div style={{ display: "flex", gap: 16, alignItems: "flex-start", perspective: 1600, perspectiveOrigin: "50% 45%" }}>
+      <div style={leftWall}>
         <CourseworkCard
           canvasSource={data && data.canvas}
           gradescopeSource={data && data.gradescope}
@@ -964,7 +1005,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
         />
         <CenterCircle data={data} />
       </div>
-      <div style={column}>
+      <div style={rightWall}>
         <GmailCard
           source={data && data.gmail}
           selected={gmailTab}
