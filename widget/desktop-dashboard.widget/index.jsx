@@ -536,10 +536,12 @@ const circleStyle = {
   boxShadow: "0 10px 30px rgba(0, 0, 0, 0.25)",
 };
 
+// Chips grow less than the clock: the bottom row sits where the circle is narrowest,
+// so full scaling would push them past the edge.
 const chipStyle = (active) => ({
-  fontSize: px(11),
-  padding: `${px(2)}px ${px(7)}px`,
-  borderRadius: px(8),
+  fontSize: 14,
+  padding: "3px 9px",
+  borderRadius: 10,
   background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
   color: active ? "#f2f3f5" : "rgba(255,255,255,0.45)",
   whiteSpace: "nowrap",
@@ -565,16 +567,16 @@ const CenterCircle = ({ data }) => {
 
   return (
     <div style={circleStyle}>
-      <div style={{ fontSize: px(12), color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 }}>
+      <div style={{ fontSize: px(10), color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 }}>
         {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
       </div>
-      <div style={{ fontSize: px(44), fontWeight: 300, lineHeight: `${px(50)}px`, letterSpacing: -1 }}>
+      <div style={{ fontSize: px(38), fontWeight: 300, lineHeight: `${px(44)}px`, letterSpacing: -1 }}>
         {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
       </div>
       <div style={{ fontSize: px(14), fontWeight: 500, marginBottom: px(10) }}>
         {greetingFor(now.getHours())}, {NAME}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: px(5), justifyContent: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: 6, justifyContent: "center" }}>
         {counts.map((c) => (
           <span key={c.label} style={chipStyle(c.n > 0)} title={c.tip}>
             {c.icon} {c.n} {c.label}
