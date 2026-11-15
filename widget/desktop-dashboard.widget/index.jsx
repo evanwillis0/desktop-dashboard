@@ -91,14 +91,6 @@ const relativeDay = (due) => {
   return `in ${days} days`;
 };
 
-const dueLabel = (item) => {
-  const due = new Date(item.due);
-  const day = due.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-  if (item.all_day) return day;
-  const time = due.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  return `${day}, ${time}`;
-};
-
 // Red: due within 24h. Amber: within 3 days. Green: later.
 const urgencyColor = (due) => {
   const hours = (new Date(due) - new Date()) / 3600000;
@@ -118,12 +110,6 @@ const timeAgo = (iso) => {
 const updatedAgo = (iso) => (iso ? timeAgo(iso) : "not loaded yet");
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-const groupBy = (items, key) =>
-  items.reduce((groups, item) => {
-    (groups[item[key]] = groups[item[key]] || []).push(item);
-    return groups;
-  }, {});
 
 // ---------- Styles ----------
 
@@ -185,37 +171,6 @@ const Card = ({ title, source, refreshing, onRefresh, children, width }) => (
     )}
   </div>
 );
-
-const CanvasCard = ({ source, refreshing, onRefresh }) => {
-  const assignments = (source && source.data && source.data.assignments) || [];
-  const courses = groupBy(assignments, "course");
-
-  return (
-    <Card title="Canvas" source={source} refreshing={refreshing} onRefresh={onRefresh}>
-      {assignments.length === 0 && (
-        <div style={styles.empty}>{source && source.status === "pending" ? "Loading…" : "Nothing due 🎉"}</div>
-      )}
-      {Object.entries(courses).map(([course, items]) => (
-        <div key={course}>
-          <div style={styles.course}>{course}</div>
-          {items.map((item) => (
-            <div
-              key={item.url}
-              style={{ ...styles.item, borderLeft: `3px solid ${urgencyColor(item.due)}` }}
-              onClick={() => openLink(item.url, "canvas")}
-              title="Open in Canvas"
-            >
-              <div style={styles.itemTitle}>{item.title}</div>
-              <div style={styles.itemDue}>
-                {dueLabel(item)} · {relativeDay(new Date(item.due))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ))}
-    </Card>
-  );
-};
 
 const GITHUB_BLUE = "#6aa8ff";
 const repoName = (fullName) => fullName.split("/").pop();
@@ -304,61 +259,144 @@ const GitHubCard = ({ source, refreshing, onRefresh }) => {
   );
 };
 
-// ----- Gradescope -----
+// ----- Coursework (Canvas + Gradescope) -----
 
-const MAX_SCORES = 4;
+const MAX_SCORES = 5;
+const SOURCE_NAMES = { canvas: "Canvas", gradescope: "Gradescope" };
+
+// "CMSC 250-010X", "CMSC250", "MATH-241" -> "CMSC250", so both sites' names for a class match.
+const courseKey = (name) => {
+  const compact = (name || "").toUpperCase().replace(/[\s\-_]/g, "");
+  const match = compact.match(/^([A-Z]{3,4})(\d{3}[A-Z]?)/);
+  return match ? match[1] + match[2] : compact || "OTHER";
+};
+
+// "CMSC250" -> "CMSC 250" for headings.
+const courseLabel = (key) => key.replace(/^([A-Z]{3,4})(\d)/, "$1 $2");
+
+const sameTitle = (a, b) => a.toLowerCase().replace(/[^a-z0-9]/g, "") === b.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// One status line for a card fed by several sources: oldest update time, any errors named.
+const combineSources = (named) => {
+  const present = named.filter(([, s]) => s);
+  if (present.length === 0) return null;
+  const errors = present.filter(([, s]) => s.status === "error").map(([name, s]) => `${name}: ${s.error}`);
+  const times = present.map(([, s]) => s.updated_at).filter(Boolean).sort();
+  return {
+    status: errors.length ? "error" : present.some(([, s]) => s.status === "pending") ? "pending" : "ok",
+    updated_at: times[0] || null,
+    error: errors.join(" · "),
+  };
+};
+
+const upcomingItems = (canvas, gradescope) => {
+  const fromGradescope = ((gradescope && gradescope.assignments) || [])
+    .filter((a) => a.open)
+    .map((a) => ({ key: `gs-${a.key}`, source: "gradescope", title: a.title, course: courseKey(a.course),
+                   due: a.due_at, allDay: false, url: a.url, status: a.status, isNew: a.is_new }));
+  const fromCanvas = ((canvas && canvas.assignments) || [])
+    .map((a) => ({ key: `cv-${a.url}`, source: "canvas", title: a.title, course: courseKey(a.course),
+                   due: a.due, allDay: a.all_day, url: a.url, status: null, isNew: false }))
+    // Some classes post the same assignment on both sites; keep the Gradescope copy (it knows if you submitted).
+    .filter((c) => !fromGradescope.some((g) => g.course === c.course && sameTitle(g.title, c.title)));
+  return [...fromGradescope, ...fromCanvas].sort((a, b) => new Date(a.due) - new Date(b.due));
+};
+
+const scoreItems = (canvas, gradescope) => {
+  const fromGradescope = ((gradescope && gradescope.assignments) || [])
+    .filter((a) => a.status === "graded")
+    .map((a) => ({ key: `gs-${a.key}`, source: "gradescope", title: a.title, course: courseKey(a.course),
+                   earned: a.earned, total: a.total, when: a.graded_seen, fallback: a.due_at,
+                   fresh: a.newly_graded, url: a.url }));
+  const fromCanvas = ((canvas && canvas.scores) || [])  // filled in once Canvas login is set up
+    .map((s) => ({ key: `cv-${s.url}`, source: "canvas", title: s.title, course: courseKey(s.course),
+                   earned: s.earned, total: s.total, when: s.graded_at, fallback: s.due_at,
+                   fresh: s.newly_graded, url: s.url }));
+  const order = (a, b) =>
+    (b.when || "").localeCompare(a.when || "") || (b.fallback || "").localeCompare(a.fallback || "");
+  return [...fromGradescope, ...fromCanvas].sort(order).slice(0, MAX_SCORES);
+};
+
+const scoreText = (s) => {
+  if (s.earned == null) return "graded";
+  const pct = s.total ? ` · ${Math.round((s.earned / s.total) * 100)}%` : "";
+  return `${s.earned} / ${s.total}${pct}`;
+};
 
 const pill = (text, background) => (
   <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: "1px 5px", borderRadius: 6,
                  background, color: "#fff", marginRight: 6, verticalAlign: "1px" }}>{text}</span>
 );
 
-const gsDueLabel = (a) => {
-  const due = new Date(a.due_at);
+const itemDueLabel = (item) => {
+  const due = new Date(item.due);
   const day = due.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-  return `${day}, ${clock(due)} · ${relativeDay(due)}`;
+  return `${item.allDay ? day : `${day}, ${clock(due)}`} · ${relativeDay(due)}`;
 };
 
-const percent = (a) => (a.total ? ` · ${Math.round((a.earned / a.total) * 100)}%` : "");
+const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh }) => {
+  const canvas = canvasSource && canvasSource.data;
+  const gradescope = gradescopeSource && gradescopeSource.data;
+  const upcoming = upcomingItems(canvas, gradescope);
+  const scores = scoreItems(canvas, gradescope);
+  const grades = (canvas && canvas.grades) || {};  // { CMSC250: { score: 93.4 } } once Canvas login is set up
 
-// Newest scores first: by when we saw the score appear, then by due date.
-const scoreOrder = (a, b) =>
-  (b.graded_seen || "").localeCompare(a.graded_seen || "") || (b.due_at || "").localeCompare(a.due_at || "");
+  // Every class from either site; classes with work due first (soonest first), then the rest.
+  const classKeys = [...new Set([
+    ...upcoming.map((i) => i.course),
+    ...((gradescope && gradescope.courses) || []).map((c) => courseKey(c.name)),
+    ...Object.keys(grades),
+  ])];
+  const firstDue = (key) => {
+    const item = upcoming.find((i) => i.course === key);
+    return item ? new Date(item.due).getTime() : Infinity;
+  };
+  classKeys.sort((a, b) => firstDue(a) - firstDue(b) || a.localeCompare(b));
 
-const GradescopeCard = ({ source, refreshing, onRefresh }) => {
-  const data = (source && source.data) || {};
-  const assignments = data.assignments || [];
-  const open = assignments.filter((a) => a.open).sort((a, b) => a.due_at.localeCompare(b.due_at));
-  const scores = assignments.filter((a) => a.status === "graded").sort(scoreOrder).slice(0, MAX_SCORES);
-  const loading = source && source.status === "pending";
+  const source = combineSources([["Canvas", canvasSource], ["Gradescope", gradescopeSource]]);
+  const loading = !canvas && !gradescope;
+  const title = `Coursework${gradescope && gradescope.term ? ` · ${gradescope.term}` : ""}`;
 
   return (
-    <Card title={`Gradescope${data.term ? ` · ${data.term}` : ""}`} source={source} refreshing={refreshing} onRefresh={onRefresh}>
-      <div style={{ ...styles.course, marginTop: 0 }}>Due</div>
+    <Card title={title} source={source} refreshing={refreshing} onRefresh={onRefresh} width={370}>
       {loading && <div style={styles.empty}>Loading…</div>}
-      {!loading && open.length === 0 && <div style={styles.allClear}>✓ Nothing open right now</div>}
-      {open.map((a) => (
-        <div key={a.key} style={{ ...styles.item, borderLeft: `3px solid ${a.status === "not_submitted" ? urgencyColor(a.due_at) : "#7fd49b"}` }}
-             onClick={() => openLink(a.url, "gradescope")} title="Open in Gradescope">
-          <div style={{ ...styles.itemTitle, ...styles.oneLine }}>
-            {a.is_new && pill("NEW", "#3b82f6")}
-            {a.title}
+      {classKeys.map((key, i) => {
+        const items = upcoming.filter((item) => item.course === key);
+        const grade = grades[key];
+        return (
+          <div key={key}>
+            <div style={{ ...styles.course, marginTop: i === 0 ? 0 : 12, display: "flex", justifyContent: "space-between" }}>
+              <span>{courseLabel(key)}</span>
+              <span style={{ textTransform: "none", letterSpacing: 0 }}>
+                {grade && grade.score != null ? `${grade.score}%` : items.length === 0 ? "nothing due" : ""}
+              </span>
+            </div>
+            {items.map((item) => (
+              <div key={item.key}
+                   style={{ ...styles.item, borderLeft: `3px solid ${item.status === "submitted" ? "#7fd49b" : urgencyColor(item.due)}` }}
+                   onClick={() => openLink(item.url, item.source)} title={`Open in ${SOURCE_NAMES[item.source]}`}>
+                <div style={{ ...styles.itemTitle, ...styles.oneLine }}>
+                  {item.isNew && pill("NEW", "#3b82f6")}
+                  {item.title}
+                </div>
+                <div style={{ ...styles.itemDue, ...styles.oneLine }}>
+                  {SOURCE_NAMES[item.source]} · {itemDueLabel(item)}{item.status === "submitted" ? " · ✓ submitted" : ""}
+                </div>
+              </div>
+            ))}
           </div>
-          <div style={{ ...styles.itemDue, ...styles.oneLine }}>
-            {a.course} · {gsDueLabel(a)}{a.status === "submitted" ? " · ✓ submitted" : ""}
-          </div>
-        </div>
-      ))}
+        );
+      })}
 
-      {scores.length > 0 && <div style={styles.course}>Recent scores</div>}
-      {scores.map((a) => (
+      {scores.length > 0 && <div style={{ ...styles.course, marginTop: 16 }}>Recent scores</div>}
+      {scores.map((s) => (
         <Row
-          key={a.key}
+          key={s.key}
           color="rgba(255,255,255,0.25)"
-          title={<span>{a.newly_graded && pill("GRADED", "#16a34a")}{a.title}</span>}
-          details={`${a.course} · ${a.score}${percent(a)}`}
-          onClick={() => openLink(a.url, "gradescope")}
-          tooltip="Open in Gradescope"
+          title={<span>{s.fresh && pill("GRADED", "#16a34a")}{s.title}</span>}
+          details={`${courseLabel(s.course)} · ${SOURCE_NAMES[s.source]} · ${scoreText(s)}`}
+          onClick={() => openLink(s.url, s.source)}
+          tooltip={`Open in ${SOURCE_NAMES[s.source]}`}
         />
       ))}
     </Card>
@@ -703,8 +741,12 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, 
         />
       </div>
       <div style={column}>
-        <CanvasCard source={data && data.canvas} refreshing={refreshing} onRefresh={onRefresh} />
-        <GradescopeCard source={data && data.gradescope} refreshing={refreshing} onRefresh={onRefresh} />
+        <CourseworkCard
+          canvasSource={data && data.canvas}
+          gradescopeSource={data && data.gradescope}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
       </div>
       <div style={column}>
         <GmailCard
