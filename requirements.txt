@@ -6,3 +6,5 @@ uvicorn==0.54.0
 httpx==0.28.1
 # Reads/writes secrets in the macOS Keychain
 keyring==25.7.0
+# Parses iCalendar (.ics) feeds, e.g. the Canvas calendar feed
+icalendar==7.3.0
