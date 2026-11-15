@@ -24,7 +24,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from dashboard.sources import canvas
+from dashboard.sources import canvas, github
 
 HOST = "127.0.0.1"  # only reachable from this Mac
 PORT = 8787
@@ -49,6 +49,7 @@ def fetch_canvas() -> dict:
 
 SOURCES: dict[str, Source] = {
     "canvas": Source(fetch=fetch_canvas, every_minutes=15),
+    "github": Source(fetch=github.fetch, every_minutes=5),
 }
 
 # Latest result per source:

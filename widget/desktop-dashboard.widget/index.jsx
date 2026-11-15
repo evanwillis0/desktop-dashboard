@@ -55,6 +55,7 @@ export const updateState = (event, previous) => {
 // A source not listed here opens in your default browser.
 const CHROME_PROFILE = {
   canvas: "Profile 1",
+  github: "Default",
 };
 
 const shellQuote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
@@ -97,13 +98,17 @@ const urgencyColor = (due) => {
   return "#7fd49b";
 };
 
-const updatedAgo = (iso) => {
-  if (!iso) return "not loaded yet";
+const timeAgo = (iso) => {
   const minutes = Math.round((new Date() - new Date(iso)) / 60000);
   if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
-  return `${Math.round(minutes / 60)}h ago`;
+  if (minutes < 48 * 60) return `${Math.round(minutes / 60)}h ago`;
+  return `${Math.round(minutes / 1440)}d ago`;
 };
+
+const updatedAgo = (iso) => (iso ? timeAgo(iso) : "not loaded yet");
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 const groupBy = (items, key) =>
   items.reduce((groups, item) => {
@@ -148,6 +153,8 @@ const styles = {
   },
   itemTitle: { fontSize: 13, fontWeight: 500 },
   itemDue: { fontSize: 11.5, color: "rgba(255,255,255,0.6)" },
+  oneLine: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  allClear: { fontSize: 12.5, color: "#7fd49b" },
   warning: { fontSize: 11.5, color: "#ffb547", marginTop: 8 },
   empty: { fontSize: 13, color: "rgba(255,255,255,0.6)" },
 };
@@ -201,6 +208,93 @@ const CanvasCard = ({ source, refreshing, onRefresh }) => {
   );
 };
 
+const GITHUB_BLUE = "#6aa8ff";
+const repoName = (fullName) => fullName.split("/").pop();
+
+const prDetails = (pr) => {
+  const parts = [`#${pr.number}`, repoName(pr.repo)];
+  if (pr.role === "reviewer") parts.push("review requested");
+  if (pr.draft) parts.push("draft");
+  if (pr.review === "APPROVED") parts.push("approved");
+  if (pr.review === "CHANGES_REQUESTED") parts.push("changes requested");
+  if (pr.ci) parts.push(`CI ${pr.ci}`);
+  return parts.join(" · ");
+};
+
+// Red: CI failing. Amber: someone is waiting on you. Blue: everything else.
+const prColor = (pr) => {
+  if (pr.ci === "failing") return "#ff6b6b";
+  if (pr.role === "reviewer" || pr.review === "CHANGES_REQUESTED") return "#ffb547";
+  return GITHUB_BLUE;
+};
+
+const notificationColor = (n) =>
+  ["Review requested", "Mentioned", "Assigned", "Security alert"].includes(n.reason) ? "#ffb547" : GITHUB_BLUE;
+
+const Row = ({ color, title, details, onClick, tooltip }) => (
+  <div style={{ ...styles.item, borderLeft: `3px solid ${color}` }} onClick={onClick} title={tooltip}>
+    <div style={{ ...styles.itemTitle, ...styles.oneLine }}>{title}</div>
+    <div style={{ ...styles.itemDue, ...styles.oneLine }}>{details}</div>
+  </div>
+);
+
+const GitHubCard = ({ source, refreshing, onRefresh }) => {
+  const data = (source && source.data) || {};
+  const notifications = data.notifications || [];
+  const pullRequests = data.pull_requests || [];
+  const repos = data.repos || [];
+  const loading = source && source.status === "pending";
+
+  return (
+    <Card title="GitHub" source={source} refreshing={refreshing} onRefresh={onRefresh}>
+      <div style={{ ...styles.course, marginTop: 0 }}>Needs you</div>
+      {loading && <div style={styles.empty}>Loading…</div>}
+      {!loading && notifications.length === 0 && pullRequests.length === 0 && (
+        <div style={styles.allClear}>✓ No unread notifications or open PRs</div>
+      )}
+      {notifications.map((n) => (
+        <Row
+          key={`n-${n.url}-${n.updated_at}`}
+          color={notificationColor(n)}
+          title={n.title}
+          details={`${n.reason} · ${repoName(n.repo)} · ${timeAgo(n.updated_at)}`}
+          onClick={() => openLink(n.url, "github")}
+          tooltip="Open on GitHub"
+        />
+      ))}
+      {pullRequests.map((pr) => (
+        <Row
+          key={`pr-${pr.url}`}
+          color={prColor(pr)}
+          title={pr.title}
+          details={prDetails(pr)}
+          onClick={() => openLink(pr.url, "github")}
+          tooltip="Open pull request"
+        />
+      ))}
+
+      {repos.length > 0 && <div style={styles.course}>Recent repos</div>}
+      {repos.map((repo) => (
+        <Row
+          key={repo.url}
+          color={repo.ci === "failing" ? "#ff6b6b" : "rgba(255,255,255,0.25)"}
+          title={repoName(repo.name)}
+          details={[
+            // Short facts first so a long commit message can't push them out of view.
+            `pushed ${timeAgo(repo.pushed_at)}`,
+            repo.ci ? `CI ${repo.ci}` : null,
+            repo.open_issues ? plural(repo.open_issues, "issue") : null,
+            repo.open_prs ? plural(repo.open_prs, "PR") : null,
+            repo.last_commit || "No commits",
+          ].filter(Boolean).join(" · ")}
+          onClick={() => openLink(repo.url, "github")}
+          tooltip={repo.last_commit || repo.name}
+        />
+      ))}
+    </Card>
+  );
+};
+
 // ---------- Layout ----------
 
 // Where the dashboard sits on the desktop, and its base text style.
@@ -229,6 +323,7 @@ export const render = ({ data, offline, refreshing }, dispatch) => {
   return (
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
       <CanvasCard source={data && data.canvas} refreshing={refreshing} onRefresh={onRefresh} />
+      <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
     </div>
   );
 };
