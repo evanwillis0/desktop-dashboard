@@ -268,7 +268,7 @@ const GitHubCard = ({ source, refreshing, onRefresh, width }) => {
 
 // ----- Coursework (Canvas + Gradescope) -----
 
-const MAX_SCORES = 5;
+const MAX_SCORES = 2;
 const SOURCE_NAMES = { canvas: "Canvas", gradescope: "Gradescope" };
 
 // "CMSC 250-010X", "CMSC250", "MATH-241" -> "CMSC250", so both sites' names for a class match.
@@ -509,7 +509,9 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
 // ----- Center circle: time, date, greeting, today's counts -----
 
 const NAME = "Evan";
-const CIRCLE_SIZE = 204;
+const CIRCLE_SIZE = 370; // fills the space under the calendar
+const CIRCLE_SCALE = CIRCLE_SIZE / 204; // text sizes below were designed for a 204px circle
+const px = (n) => Math.round(n * CIRCLE_SCALE);
 const SOON_HOURS = 48; // "due soon" = due within this many hours and not submitted
 
 const greetingFor = (hour) =>
@@ -535,9 +537,9 @@ const circleStyle = {
 };
 
 const chipStyle = (active) => ({
-  fontSize: 11,
-  padding: "2px 7px",
-  borderRadius: 8,
+  fontSize: px(11),
+  padding: `${px(2)}px ${px(7)}px`,
+  borderRadius: px(8),
   background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
   color: active ? "#f2f3f5" : "rgba(255,255,255,0.45)",
   whiteSpace: "nowrap",
@@ -563,16 +565,16 @@ const CenterCircle = ({ data }) => {
 
   return (
     <div style={circleStyle}>
-      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 }}>
+      <div style={{ fontSize: px(12), color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 }}>
         {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
       </div>
-      <div style={{ fontSize: 44, fontWeight: 300, lineHeight: "50px", letterSpacing: -1 }}>
+      <div style={{ fontSize: px(44), fontWeight: 300, lineHeight: `${px(50)}px`, letterSpacing: -1 }}>
         {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
       </div>
-      <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 10 }}>
+      <div style={{ fontSize: px(14), fontWeight: 500, marginBottom: px(10) }}>
         {greetingFor(now.getHours())}, {NAME}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: 5, justifyContent: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: px(5), justifyContent: "center" }}>
         {counts.map((c) => (
           <span key={c.label} style={chipStyle(c.n > 0)} title={c.tip}>
             {c.icon} {c.n} {c.label}
@@ -639,7 +641,7 @@ const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
 const CAL_DAYS = 3; // columns shown at once
 const CAL_MAX_OFFSET = 7 - CAL_DAYS; // the server sends 7 days of events
 const PX_PER_HOUR = 24;
-const VISIBLE_UNTIL = 17; // the grid shows up to 5 PM; later hours are a scroll away
+const VISIBLE_UNTIL = 19; // the grid shows up to 7 PM; later hours are a scroll away
 const SCROLL_ID = "dd-cal-scroll";
 
 const LATER_TAGS_ID = "dd-cal-later";
@@ -760,7 +762,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
     })
   );
   const gridHeight = (lastHour - firstHour) * PX_PER_HOUR;
-  // Only up to VISIBLE_UNTIL (5 PM) is visible at once; the rest scrolls.
+  // Only up to VISIBLE_UNTIL (7 PM) is visible at once; the rest scrolls.
   const visibleHeight = Math.min(gridHeight, Math.max(VISIBLE_UNTIL - firstHour, 1) * PX_PER_HOUR);
   const scrolls = gridHeight > visibleHeight;
   // Per day: how many events start at or after VISIBLE_UNTIL (hidden until you scroll).
@@ -818,7 +820,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
         </div>
       )}
 
-      {/* Time grid: a scrolling window that shows up to VISIBLE_UNTIL (5 PM) */}
+      {/* Time grid: a scrolling window that shows up to VISIBLE_UNTIL (7 PM) */}
       <div style={{ position: "relative", marginTop: 4 }}>
       <div id={SCROLL_ID} onScroll={onGridScroll}
            style={{ height: visibleHeight + 8, overflowY: scrolls ? "auto" : "hidden", overflowX: "hidden" }}>
@@ -939,7 +941,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
   }
 
   return (
-    // Three columns: coursework | calendar, center circle, GitHub | messages.
+    // Three columns: coursework + GitHub | calendar + center circle | messages.
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
       <div style={column}>
         <CourseworkCard
@@ -948,6 +950,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
+        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} width={370} />
       </div>
       <div style={{ ...column, gap: 12 }}>
         <CalendarCard
@@ -958,7 +961,6 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
           onRefresh={onRefresh}
         />
         <CenterCircle data={data} />
-        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} width={470} />
       </div>
       <div style={column}>
         <GmailCard
