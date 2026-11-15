@@ -11,3 +11,7 @@ icalendar==7.3.0
 # Google sign-in (OAuth) and token refresh for Gmail + Calendar
 google-auth==2.62.2
 google-auth-oauthlib==1.5.0
+# Opens your installed Chrome for one-time logins (Gradescope, Piazza, Canvas grades)
+playwright==1.65.2
+# Reads data out of web pages (Gradescope has no API)
+beautifulsoup4==4.15.0
