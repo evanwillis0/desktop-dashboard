@@ -41,9 +41,10 @@ cd backend && ../.venv/bin/python -m dashboard.setup_canvas
 scripts/install_login.sh
 ```
 
-Installs two launchd agents: the server runs in the background (restarted if it crashes), and at
+Installs three launchd agents: the server runs in the background (restarted if it crashes); at
 each login `scripts/at_login.sh` opens Übersicht and hides reopened apps (they stay open; click in
-the Dock to bring one back). Logs: `~/Library/Logs/desktop-dashboard/`. Undo with `scripts/uninstall_login.sh`.
+the Dock to bring one back); and every 2 minutes `scripts/watchdog.sh` restarts Übersicht if its
+widget server has stopped (which otherwise leaves the desktop blank). Logs: `~/Library/Logs/desktop-dashboard/`. Undo with `scripts/uninstall_login.sh`.
 
 ## Run the server manually
 
