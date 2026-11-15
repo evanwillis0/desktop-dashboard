@@ -1,0 +1,8 @@
+# Web framework for the local JSON server the widget reads from
+fastapi==0.163.1
+# Runs the FastAPI app
+uvicorn==0.54.0
+# HTTP client for calling Canvas, GitHub, Google, etc.
+httpx==0.28.1
+# Reads/writes secrets in the macOS Keychain
+keyring==25.7.0

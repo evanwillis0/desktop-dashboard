@@ -1,0 +1,20 @@
+# Python virtual environment and caches
+.venv/
+__pycache__/
+*.pyc
+
+# Cached API responses (may contain grades, emails, etc.)
+data/*
+!data/.gitkeep
+
+# Secrets: never commit these. Real secrets live in the macOS Keychain,
+# but this guards against any token or credential file landing in the repo.
+.env
+.env.*
+*.token
+*credentials*.json
+*token*.json
+client_secret*.json
+
+# macOS
+.DS_Store
