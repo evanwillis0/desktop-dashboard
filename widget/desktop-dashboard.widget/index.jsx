@@ -308,13 +308,17 @@ const scoreItems = (canvas, gradescope) => {
     .map((a) => ({ key: `gs-${a.key}`, source: "gradescope", title: a.title, course: courseKey(a.course),
                    earned: a.earned, total: a.total, when: a.graded_seen, fallback: a.due_at,
                    fresh: a.newly_graded, url: a.url }));
-  const fromCanvas = ((canvas && canvas.scores) || [])  // filled in once Canvas login is set up
+  const fromCanvas = ((canvas && canvas.scores) || [])
     .map((s) => ({ key: `cv-${s.url}`, source: "canvas", title: s.title, course: courseKey(s.course),
                    earned: s.earned, total: s.total, when: s.graded_at, fallback: s.due_at,
                    fresh: s.newly_graded, url: s.url }));
+  // Some classes copy Gradescope grades into Canvas. Keep the Canvas copy: it knows when it was graded.
+  const gradescopeOnly = fromGradescope.filter(
+    (g) => !fromCanvas.some((c) => c.course === g.course && sameTitle(c.title, g.title))
+  );
   const order = (a, b) =>
     (b.when || "").localeCompare(a.when || "") || (b.fallback || "").localeCompare(a.fallback || "");
-  return [...fromGradescope, ...fromCanvas].sort(order).slice(0, MAX_SCORES);
+  return [...gradescopeOnly, ...fromCanvas].sort(order).slice(0, MAX_SCORES);
 };
 
 const scoreText = (s) => {
@@ -339,7 +343,9 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh 
   const gradescope = gradescopeSource && gradescopeSource.data;
   const upcoming = upcomingItems(canvas, gradescope);
   const scores = scoreItems(canvas, gradescope);
-  const grades = (canvas && canvas.grades) || {};  // { CMSC250: { score: 93.4 } } once Canvas login is set up
+  // Overall class scores from Canvas, keyed the same way as everything else ("CMSC250").
+  const grades = {};
+  Object.entries((canvas && canvas.grades) || {}).forEach(([name, g]) => { grades[courseKey(name)] = g; });
 
   // Every class from either site; classes with work due first (soonest first), then the rest.
   const classKeys = [...new Set([
@@ -368,7 +374,9 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh 
             <div style={{ ...styles.course, marginTop: i === 0 ? 0 : 12, display: "flex", justifyContent: "space-between" }}>
               <span>{courseLabel(key)}</span>
               <span style={{ textTransform: "none", letterSpacing: 0 }}>
-                {grade && grade.score != null ? `${grade.score}%` : items.length === 0 ? "nothing due" : ""}
+                {[items.length === 0 ? "nothing due" : null,
+                  grade && grade.score != null ? `${grade.score}%${grade.grade ? ` (${grade.grade})` : ""}` : null]
+                  .filter(Boolean).join(" · ")}
               </span>
             </div>
             {items.map((item) => (
@@ -399,6 +407,9 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh 
           tooltip={`Open in ${SOURCE_NAMES[s.source]}`}
         />
       ))}
+      {canvas && canvas.scores_error && (
+        <div style={styles.warning}>⚠ Canvas grades: {canvas.scores_error}</div>
+      )}
     </Card>
   );
 };

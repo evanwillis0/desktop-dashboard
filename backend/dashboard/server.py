@@ -24,7 +24,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from dashboard.sources import canvas, github, gmail, google_calendar, gradescope
+from dashboard.sources import canvas, canvas_grades, github, gmail, google_calendar, gradescope
 
 HOST = "127.0.0.1"  # only reachable from this Mac
 PORT = 8787
@@ -43,8 +43,18 @@ class Source:
 
 
 def fetch_canvas() -> dict:
+    """Due dates from the calendar feed, plus grades and scores from the Canvas login.
+
+    The two are independent: if the login has expired, due dates still show and only
+    the grades part reports the problem (scores_error).
+    """
     items = canvas.upcoming(canvas.fetch_assignments())
-    return {"assignments": [a.to_dict() for a in items]}
+    data = {"assignments": [a.to_dict() for a in items], "grades": {}, "scores": [], "scores_error": None}
+    try:
+        data.update(canvas_grades.fetch())
+    except Exception as error:  # noqa: BLE001
+        data["scores_error"] = safe_error(error)
+    return data
 
 
 SOURCES: dict[str, Source] = {
