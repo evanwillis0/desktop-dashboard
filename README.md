@@ -32,4 +32,14 @@ Secrets (tokens, passwords) are stored in the macOS Keychain, never in this fold
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+cd backend && ../.venv/bin/python -m dashboard.setup_canvas
 ```
+
+## Run the server
+
+```bash
+cd backend && ../.venv/bin/python -m dashboard.server
+```
+
+Then open http://127.0.0.1:8787/api/all. Each source refreshes on its own timer;
+`POST /api/refresh` refreshes everything immediately.
