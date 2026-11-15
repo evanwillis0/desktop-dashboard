@@ -13,10 +13,9 @@ from google.oauth2.credentials import Credentials
 
 from dashboard.secrets import get_secret, set_secret
 
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/calendar.readonly",
-]
+GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+SCOPES = [GMAIL_SCOPE, CALENDAR_SCOPE]
 
 # Your Google accounts: dashboard label -> Chrome profile folder used to sign in and open links.
 # The labels are only names for the setup command; the dashboard shows each account's real address.
@@ -43,8 +42,22 @@ def token_key(label: str) -> str:
     return f"google_token_{label}"
 
 
-def save_credentials(label: str, creds: Credentials) -> None:
-    set_secret(token_key(label), creds.to_json())
+def save_credentials(label: str, creds: Credentials, granted: list[str] | None = None) -> None:
+    """Save credentials. `granted` records which permissions you actually allowed
+    (Google lets you untick some), so we only ever ask for those."""
+    info = json.loads(creds.to_json())
+    if granted is not None:
+        info["scopes"] = sorted(granted)
+    set_secret(token_key(label), json.dumps(info))
+
+
+def granted_scopes(label: str) -> set[str]:
+    raw = get_secret(token_key(label))
+    return set(json.loads(raw).get("scopes", [])) if raw else set()
+
+
+def has_scope(label: str, scope: str) -> bool:
+    return scope in granted_scopes(label)
 
 
 def save_email(label: str, email: str) -> None:
@@ -62,7 +75,9 @@ def load_credentials(label: str) -> Credentials:
     if not raw:
         raise RuntimeError(f"Google account '{label}' isn't connected. Run: {SETUP_HINT} {label}")
 
-    creds = Credentials.from_authorized_user_info(json.loads(raw), SCOPES)
+    # Use the saved (granted) permissions, not SCOPES: asking to refresh a permission
+    # you never allowed would make Google reject the refresh.
+    creds = Credentials.from_authorized_user_info(json.loads(raw))
     if not creds.valid:
         try:
             creds.refresh(Request())

@@ -11,6 +11,7 @@ Step 2, once per account: sign in (opens Chrome in that account's profile).
 """
 
 import json
+import os
 import subprocess
 import sys
 import webbrowser
@@ -19,7 +20,19 @@ from pathlib import Path
 import httpx
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from dashboard.google_auth import ACCOUNTS, SCOPES, client_config, save_credentials, save_email
+from dashboard.google_auth import (
+    ACCOUNTS,
+    CALENDAR_SCOPE,
+    GMAIL_SCOPE,
+    SCOPES,
+    client_config,
+    save_credentials,
+    save_email,
+)
+
+# Google lets you untick permissions on the consent screen. By default the sign-in
+# library then crashes; this makes it accept the partial grant so we can check it ourselves.
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 from dashboard.secrets import set_secret
 
 
@@ -64,6 +77,14 @@ def connect_account(label: str) -> None:
         success_message="Connected to desktop-dashboard. You can close this tab.",
     )
 
+    # Google returns the permissions you actually allowed (as a list or a space-separated string).
+    scope = flow.oauth2session.token.get("scope", SCOPES)
+    granted = set(scope.split() if isinstance(scope, str) else scope)
+    if GMAIL_SCOPE not in granted:
+        print("Gmail permission wasn't allowed, so this account can't be used. Nothing was saved.\n"
+              "Run this again and tick the Gmail box on Google's permission screen.")
+        return
+
     # Ask Gmail which address we got, so a sign-in to the wrong account is caught.
     profile_info = httpx.get(
         "https://gmail.googleapis.com/gmail/v1/users/me/profile",
@@ -73,9 +94,12 @@ def connect_account(label: str) -> None:
     profile_info.raise_for_status()
     email = profile_info.json()["emailAddress"]
 
-    save_credentials(label, creds)
+    save_credentials(label, creds, granted=list(granted))
     save_email(label, email)
     print(f"Connected '{label}' as {email}. Saved to the Keychain.")
+    if CALENDAR_SCOPE not in granted:
+        print("Note: Calendar wasn't allowed, so this account won't appear on the Calendar card.\n"
+              "To add it later, run this again and tick the Calendar box.")
 
 
 def main() -> None:
