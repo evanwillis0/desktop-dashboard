@@ -28,21 +28,27 @@ TIMEOUT_SECONDS = 5 * 60
 class Site:
     start_url: str  # where the login begins
     host: str  # the site's own address (cookies for it are saved)
-    logged_in_paths: tuple[str, ...]  # landing on one of these means login worked
+    probe_url: str  # a page that answers 200 only when you're logged in (otherwise it redirects or refuses)
 
 
 SITES = {
-    "gradescope": Site("https://www.gradescope.com/login", "www.gradescope.com", ("/account",)),
-    "piazza": Site("https://piazza.com/account/login", "piazza.com", ("/class",)),
-    "canvas": Site("https://umd.instructure.com/", "umd.instructure.com", ("/", "/courses", "/?login_success=1")),
+    "gradescope": Site("https://www.gradescope.com/login", "www.gradescope.com", "https://www.gradescope.com/account"),
+    "piazza": Site("https://piazza.com/account/login", "piazza.com", "https://piazza.com/class"),
+    "canvas": Site("https://umd.instructure.com/", "umd.instructure.com", "https://umd.instructure.com/api/v1/users/self"),
 }
 
 
-def is_logged_in(url: str, site: Site) -> bool:
-    parsed = urlparse(url)
-    if parsed.hostname != site.host or "login" in parsed.path:
+def probe_logged_in(browser, site: Site) -> bool:
+    """Ask the site itself, using the browser window's cookies, whether we're logged in.
+
+    No redirects are followed: a logged-out visitor gets sent to a login page (3xx)
+    or refused (401/403), while a logged-in one gets the page (200).
+    """
+    try:
+        response = browser.request.get(site.probe_url, max_redirects=0, timeout=10_000)
+    except Exception:  # network hiccup mid-login; just try again next round
         return False
-    return any(parsed.path == p or (p != "/" and parsed.path.startswith(p)) for p in site.logged_in_paths)
+    return response.status == 200
 
 
 def log_in(name: str) -> None:
@@ -62,10 +68,14 @@ def log_in(name: str) -> None:
 
         deadline = time.time() + TIMEOUT_SECONDS
         while time.time() < deadline:
-            # Check every open tab, in case the login flow opened a new one.
-            if any(is_logged_in(tab.url, site) for tab in browser.pages):
+            if not browser.pages:  # you closed the window
+                print("The login window was closed before login finished. Nothing was saved.")
+                return
+            # Only ask once you're back on the site (not while on the school login page).
+            on_site = any(urlparse(tab.url).hostname == site.host for tab in browser.pages)
+            if on_site and probe_logged_in(browser, site):
                 break
-            time.sleep(1)
+            time.sleep(2)
         else:
             browser.close()
             print("Timed out after 5 minutes without finishing login. Nothing was saved.")
