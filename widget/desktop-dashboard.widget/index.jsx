@@ -32,16 +32,19 @@ const refreshNow = async (dispatch) => {
   }
 };
 
-export const initialState = { data: null, offline: false, refreshing: false };
+export const initialState = { data: null, offline: false, refreshing: false, gmailTab: null };
 
 export const updateState = (event, previous) => {
   switch (event.type) {
     case "DATA":
-      return { data: event.data, offline: false, refreshing: false };
+      // Keep UI choices (like the selected Gmail tab) when new data arrives.
+      return { ...previous, data: event.data, offline: false, refreshing: false };
     case "OFFLINE":
       return { ...previous, offline: true, refreshing: false };
     case "REFRESHING":
       return { ...previous, refreshing: true };
+    case "SELECT_GMAIL_TAB":
+      return { ...previous, gmailTab: event.label };
     default:
       return previous;
   }
@@ -53,23 +56,26 @@ export const updateState = (event, previous) => {
 // ~/Library/Application Support/Google/Chrome/Local State:
 //   "Default" = personal (gmail.com), "Profile 1" = UMD (terpmail), "Profile 2" = NOVA (vccs.edu)
 // A source not listed here opens in your default browser.
+// (Gmail tabs get their profile from the server, one per account.)
 const CHROME_PROFILE = {
   canvas: "Profile 1",
   github: "Default",
+  calendar: "Profile 1",
 };
 
 const shellQuote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
 
 // Open links outside the widget (a plain <a href> would load inside the widget).
-const openLink = (url, source) => {
+const openInProfile = (url, profile) => {
   if (!url || !url.startsWith("https://")) return;
-  const profile = CHROME_PROFILE[source];
   if (profile) {
     run(`open -na "Google Chrome" --args --profile-directory=${shellQuote(profile)} ${shellQuote(url)}`);
   } else {
     run(`open ${shellQuote(url)}`);
   }
 };
+
+const openLink = (url, source) => openInProfile(url, CHROME_PROFILE[source]);
 
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
@@ -161,8 +167,8 @@ const styles = {
 
 // ---------- Cards ----------
 
-const Card = ({ title, source, refreshing, onRefresh, children }) => (
-  <div style={styles.card}>
+const Card = ({ title, source, refreshing, onRefresh, children, width }) => (
+  <div style={{ ...styles.card, ...(width ? { width } : {}) }}>
     <div style={styles.header}>
       <div style={styles.title}>{title}</div>
       <div style={styles.meta}>
@@ -295,6 +301,154 @@ const GitHubCard = ({ source, refreshing, onRefresh }) => {
   );
 };
 
+// ----- Gmail -----
+
+const badgeText = (n) => (n >= 100 ? "99+" : String(n));
+
+const tabStyle = (active) => ({
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 5,
+  padding: "5px 4px",
+  borderRadius: 7,
+  fontSize: 12,
+  whiteSpace: "nowrap",
+  fontWeight: active ? 600 : 500,
+  cursor: "pointer",
+  color: active ? "#fff" : "rgba(255,255,255,0.6)",
+  background: active ? "rgba(255,255,255,0.12)" : "transparent",
+});
+
+const badgeStyle = {
+  fontSize: 10,
+  fontWeight: 700,
+  padding: "1px 5px",
+  borderRadius: 8,
+  background: "#e5534b",
+  color: "#fff",
+};
+
+const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
+  const accounts = (source && source.data && source.data.accounts) || [];
+  const account = accounts.find((a) => a.label === selected) || accounts[0];
+
+  return (
+    <Card title="Gmail" source={source} refreshing={refreshing} onRefresh={onRefresh} width={390}>
+      {!account && <div style={styles.empty}>Loading…</div>}
+      {account && (
+        <div>
+          <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+            {accounts.map((a) => (
+              <div key={a.label} style={tabStyle(a === account)} onClick={() => onSelect(a.label)} title={a.email}>
+                {a.name}
+                {a.unread_recent > 0 && <span style={badgeStyle}>{badgeText(a.unread_recent)}</span>}
+                {a.error && <span style={{ color: "#ffb547" }}>⚠</span>}
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{ ...styles.meta, justifyContent: "space-between", marginBottom: 8, cursor: "pointer" }}
+            onClick={() => openInProfile(account.inbox_url, account.chrome_profile)}
+            title="Open this inbox"
+          >
+            <span style={styles.oneLine}>{account.email}</span>
+            <span>last 7 days ↗</span>
+          </div>
+
+          {account.error && <div style={styles.warning}>⚠ {account.error}</div>}
+          {!account.error && account.messages.length === 0 && (
+            <div style={styles.allClear}>✓ No mail in the last 7 days</div>
+          )}
+          {account.messages.map((m) => (
+            <div
+              key={m.url}
+              style={{ ...styles.item, borderLeft: `3px solid ${m.unread ? GITHUB_BLUE : "rgba(255,255,255,0.15)"}` }}
+              onClick={() => openInProfile(m.url, account.chrome_profile)}
+              title={m.snippet}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ ...styles.itemTitle, ...styles.oneLine, fontWeight: m.unread ? 650 : 400 }}>{m.from}</span>
+                <span style={{ ...styles.itemDue, flexShrink: 0 }}>{timeAgo(m.received_at)}</span>
+              </div>
+              <div style={{ ...styles.oneLine, fontSize: 12.5, fontWeight: m.unread ? 550 : 400,
+                            color: m.unread ? "#f2f3f5" : "rgba(255,255,255,0.7)" }}>
+                {m.subject}
+              </div>
+              <div style={{ ...styles.itemDue, ...styles.oneLine }}>{m.snippet}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+// ----- Calendar -----
+
+const MAX_EVENTS = 12;
+
+// All-day events come as "2026-11-16" (a local date, not midnight UTC).
+const eventDate = (e) => (e.all_day ? new Date(`${e.start}T00:00:00`) : new Date(e.start));
+
+const dayHeading = (date) => {
+  const days = daysUntil(date);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+};
+
+const clock = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+const eventTime = (e) => {
+  if (e.all_day) return "All day";
+  const start = new Date(e.start);
+  const end = new Date(e.end);
+  if (start <= new Date() && end > new Date()) return `Now · until ${clock(end)}`;
+  return `${clock(start)} – ${clock(end)}`;
+};
+
+const CalendarCard = ({ source, refreshing, onRefresh }) => {
+  const events = (source && source.data && source.data.events) || [];
+  const shown = events.slice(0, MAX_EVENTS);
+  const days = [];
+  shown.forEach((e) => {
+    const heading = dayHeading(eventDate(e));
+    const last = days[days.length - 1];
+    if (last && last.heading === heading) last.events.push(e);
+    else days.push({ heading, events: [e] });
+  });
+
+  return (
+    <Card title="Calendar" source={source} refreshing={refreshing} onRefresh={onRefresh}>
+      {source && source.status === "pending" && <div style={styles.empty}>Loading…</div>}
+      {source && source.status !== "pending" && events.length === 0 && (
+        <div style={styles.allClear}>✓ Nothing in the next 7 days</div>
+      )}
+      {days.map((day, i) => (
+        <div key={day.heading}>
+          <div style={{ ...styles.course, marginTop: i === 0 ? 0 : 12 }}>{day.heading}</div>
+          {day.events.map((e) => (
+            <Row
+              key={`${e.url}-${e.start}`}
+              color={e.color || GITHUB_BLUE}
+              title={e.title}
+              details={[eventTime(e), e.location, e.calendar].filter(Boolean).join(" · ")}
+              onClick={() => openLink(e.url, "calendar")}
+              tooltip={e.calendar}
+            />
+          ))}
+        </div>
+      ))}
+      {events.length > MAX_EVENTS && (
+        <div style={{ ...styles.itemDue, marginTop: 4 }}>+{events.length - MAX_EVENTS} more this week</div>
+      )}
+    </Card>
+  );
+};
+
 // ---------- Layout ----------
 
 // Where the dashboard sits on the desktop, and its base text style.
@@ -306,8 +460,9 @@ export const className = `
   -webkit-font-smoothing: antialiased;
 `;
 
-export const render = ({ data, offline, refreshing }, dispatch) => {
+export const render = ({ data, offline, refreshing, gmailTab }, dispatch) => {
   const onRefresh = () => refreshNow(dispatch);
+  const column = { display: "flex", flexDirection: "column", gap: 16 };
 
   if (offline && !data) {
     return (
@@ -321,9 +476,24 @@ export const render = ({ data, offline, refreshing }, dispatch) => {
   }
 
   return (
+    // Three columns: what's on today | what's due + code | mail.
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-      <CanvasCard source={data && data.canvas} refreshing={refreshing} onRefresh={onRefresh} />
-      <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
+      <div style={column}>
+        <CalendarCard source={data && data.calendar} refreshing={refreshing} onRefresh={onRefresh} />
+      </div>
+      <div style={column}>
+        <CanvasCard source={data && data.canvas} refreshing={refreshing} onRefresh={onRefresh} />
+        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
+      </div>
+      <div style={column}>
+        <GmailCard
+          source={data && data.gmail}
+          selected={gmailTab}
+          onSelect={(label) => dispatch({ type: "SELECT_GMAIL_TAB", label })}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
+      </div>
     </div>
   );
 };
