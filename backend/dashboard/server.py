@@ -24,7 +24,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from dashboard.sources import canvas, github, gmail, google_calendar
+from dashboard.sources import canvas, github, gmail, google_calendar, gradescope
 
 HOST = "127.0.0.1"  # only reachable from this Mac
 PORT = 8787
@@ -52,6 +52,7 @@ SOURCES: dict[str, Source] = {
     "github": Source(fetch=github.fetch, every_minutes=5),
     "gmail": Source(fetch=gmail.fetch, every_minutes=5),
     "calendar": Source(fetch=google_calendar.fetch, every_minutes=10),
+    "gradescope": Source(fetch=gradescope.fetch, every_minutes=10),
 }
 
 # Latest result per source:

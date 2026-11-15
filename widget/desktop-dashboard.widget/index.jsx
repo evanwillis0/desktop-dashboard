@@ -63,6 +63,7 @@ const CHROME_PROFILE = {
   canvas: "Profile 1",
   github: "Default",
   calendar: "Profile 1",
+  gradescope: "Profile 1",
 };
 
 const shellQuote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
@@ -297,6 +298,67 @@ const GitHubCard = ({ source, refreshing, onRefresh }) => {
           ].filter(Boolean).join(" · ")}
           onClick={() => openLink(repo.url, "github")}
           tooltip={repo.last_commit || repo.name}
+        />
+      ))}
+    </Card>
+  );
+};
+
+// ----- Gradescope -----
+
+const MAX_SCORES = 4;
+
+const pill = (text, background) => (
+  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: "1px 5px", borderRadius: 6,
+                 background, color: "#fff", marginRight: 6, verticalAlign: "1px" }}>{text}</span>
+);
+
+const gsDueLabel = (a) => {
+  const due = new Date(a.due_at);
+  const day = due.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return `${day}, ${clock(due)} · ${relativeDay(due)}`;
+};
+
+const percent = (a) => (a.total ? ` · ${Math.round((a.earned / a.total) * 100)}%` : "");
+
+// Newest scores first: by when we saw the score appear, then by due date.
+const scoreOrder = (a, b) =>
+  (b.graded_seen || "").localeCompare(a.graded_seen || "") || (b.due_at || "").localeCompare(a.due_at || "");
+
+const GradescopeCard = ({ source, refreshing, onRefresh }) => {
+  const data = (source && source.data) || {};
+  const assignments = data.assignments || [];
+  const open = assignments.filter((a) => a.open).sort((a, b) => a.due_at.localeCompare(b.due_at));
+  const scores = assignments.filter((a) => a.status === "graded").sort(scoreOrder).slice(0, MAX_SCORES);
+  const loading = source && source.status === "pending";
+
+  return (
+    <Card title={`Gradescope${data.term ? ` · ${data.term}` : ""}`} source={source} refreshing={refreshing} onRefresh={onRefresh}>
+      <div style={{ ...styles.course, marginTop: 0 }}>Due</div>
+      {loading && <div style={styles.empty}>Loading…</div>}
+      {!loading && open.length === 0 && <div style={styles.allClear}>✓ Nothing open right now</div>}
+      {open.map((a) => (
+        <div key={a.key} style={{ ...styles.item, borderLeft: `3px solid ${a.status === "not_submitted" ? urgencyColor(a.due_at) : "#7fd49b"}` }}
+             onClick={() => openLink(a.url, "gradescope")} title="Open in Gradescope">
+          <div style={{ ...styles.itemTitle, ...styles.oneLine }}>
+            {a.is_new && pill("NEW", "#3b82f6")}
+            {a.title}
+          </div>
+          <div style={{ ...styles.itemDue, ...styles.oneLine }}>
+            {a.course} · {gsDueLabel(a)}{a.status === "submitted" ? " · ✓ submitted" : ""}
+          </div>
+        </div>
+      ))}
+
+      {scores.length > 0 && <div style={styles.course}>Recent scores</div>}
+      {scores.map((a) => (
+        <Row
+          key={a.key}
+          color="rgba(255,255,255,0.25)"
+          title={<span>{a.newly_graded && pill("GRADED", "#16a34a")}{a.title}</span>}
+          details={`${a.course} · ${a.score}${percent(a)}`}
+          onClick={() => openLink(a.url, "gradescope")}
+          tooltip="Open in Gradescope"
         />
       ))}
     </Card>
@@ -642,7 +704,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, 
       </div>
       <div style={column}>
         <CanvasCard source={data && data.canvas} refreshing={refreshing} onRefresh={onRefresh} />
-        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
+        <GradescopeCard source={data && data.gradescope} refreshing={refreshing} onRefresh={onRefresh} />
       </div>
       <div style={column}>
         <GmailCard
@@ -652,6 +714,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, 
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
+        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
       </div>
     </div>
   );
