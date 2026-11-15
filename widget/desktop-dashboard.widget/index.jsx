@@ -484,7 +484,7 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
           )}
           {account.messages.slice(0, 5).map((m) => (
             <div
-              key={m.url}
+              key={`${m.url}-${m.received_at}`}  // two emails in one conversation share a URL
               style={{ ...styles.item, borderLeft: `3px solid ${m.unread ? GITHUB_BLUE : "rgba(255,255,255,0.15)"}` }}
               onClick={() => openInProfile(m.url, account.chrome_profile)}
               title={m.snippet}
@@ -561,7 +561,36 @@ const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
 
 const CAL_DAYS = 3; // columns shown at once
 const CAL_MAX_OFFSET = 7 - CAL_DAYS; // the server sends 7 days of events
-const PX_PER_HOUR = 25;
+const PX_PER_HOUR = 28;
+const VISIBLE_UNTIL = 19; // the grid shows up to 7 PM; later hours are a scroll away
+const SCROLL_ID = "dd-cal-scroll";
+
+const LATER_TAGS_ID = "dd-cal-later";
+
+const scrollToLater = () => {
+  const el = document.getElementById(SCROLL_ID);
+  if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+};
+
+// Fade the "+N later" tags out once you've scrolled down to the evening (they'd cover it).
+const onGridScroll = (event) => {
+  const el = event.currentTarget;
+  const tags = document.getElementById(LATER_TAGS_ID);
+  if (tags) tags.style.opacity = el.scrollTop >= el.scrollHeight - el.clientHeight - 6 ? "0" : "1";
+};
+
+const laterTag = {
+  pointerEvents: "auto",
+  cursor: "pointer",
+  fontSize: 10.5,
+  fontWeight: 600,
+  padding: "2px 8px",
+  borderRadius: 9,
+  background: "rgba(20, 22, 28, 0.85)",
+  border: "1px solid rgba(255,255,255,0.18)",
+  color: "#f2f3f5",
+  userSelect: "none",
+};
 const GUTTER = 38; // width of the hour labels on the left
 const HOUR_MS = 3600000;
 
@@ -654,6 +683,13 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
     })
   );
   const gridHeight = (lastHour - firstHour) * PX_PER_HOUR;
+  // Only up to 7 PM is visible at once; the rest scrolls.
+  const visibleHeight = Math.min(gridHeight, Math.max(VISIBLE_UNTIL - firstHour, 1) * PX_PER_HOUR);
+  const scrolls = gridHeight > visibleHeight;
+  // Per day: how many events start at or after 7 PM (hidden until you scroll).
+  const laterCounts = columns.map(({ day, timed }) =>
+    timed.filter((it) => (it.start - day) / HOUR_MS >= VISIBLE_UNTIL).length
+  );
   const hours = Array.from({ length: lastHour - firstHour + 1 }, (_, i) => firstHour + i);
   const topFor = (date, day) => ((date - day) / HOUR_MS - firstHour) * PX_PER_HOUR;
   const now = new Date();
@@ -705,8 +741,12 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
         </div>
       )}
 
-      {/* Time grid */}
-      <div style={{ position: "relative", height: gridHeight, marginTop: 4 }}>
+      {/* Time grid: a scrolling window that shows up to 7 PM */}
+      <div style={{ position: "relative", marginTop: 4 }}>
+      <div id={SCROLL_ID} onScroll={onGridScroll}
+           style={{ height: visibleHeight + 8, overflowY: scrolls ? "auto" : "hidden", overflowX: "hidden" }}>
+      {/* marginTop leaves room for the first hour label, which sits half above its line */}
+      <div style={{ position: "relative", height: gridHeight, marginTop: 7 }}>
         {hours.map((h) => (
           <div key={h} style={{ position: "absolute", top: (h - firstHour) * PX_PER_HOUR, left: 0, right: 0 }}>
             <div style={{ position: "absolute", left: 0, width: GUTTER - 6, top: -6, textAlign: "right",
@@ -765,6 +805,25 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
           })}
         </div>
       </div>
+      </div>
+
+      {/* "+N later" tags at the bottom of each day with events after 7 PM; click to scroll down */}
+      {scrolls && laterCounts.some((n) => n > 0) && (
+        <div id={LATER_TAGS_ID}
+             style={{ position: "absolute", bottom: 6, left: GUTTER, right: 10, display: "flex", pointerEvents: "none",
+                      transition: "opacity 0.2s" }}>
+          {laterCounts.map((n, i) => (
+            <div key={i} style={{ flex: 1, textAlign: "center" }}>
+              {n > 0 && (
+                <span style={laterTag} onClick={scrollToLater} title="Scroll to evening events">
+                  +{n} later ↓
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      </div>
 
       {source && source.status === "pending" && <div style={{ ...styles.empty, marginTop: 8 }}>Loading…</div>}
     </Card>
@@ -780,6 +839,11 @@ export const className = `
   color: #f2f3f5;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   -webkit-font-smoothing: antialiased;
+
+  /* Thin, subtle scrollbar for the calendar's scrolling grid */
+  #dd-cal-scroll::-webkit-scrollbar { width: 5px; }
+  #dd-cal-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); border-radius: 3px; }
+  #dd-cal-scroll::-webkit-scrollbar-track { background: transparent; }
 `;
 
 export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, piazzaTab }, dispatch) => {
