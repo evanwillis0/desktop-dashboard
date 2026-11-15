@@ -8,3 +8,6 @@ httpx==0.28.1
 keyring==25.7.0
 # Parses iCalendar (.ics) feeds, e.g. the Canvas calendar feed
 icalendar==7.3.0
+# Google sign-in (OAuth) and token refresh for Gmail + Calendar
+google-auth==2.62.2
+google-auth-oauthlib==1.5.0
