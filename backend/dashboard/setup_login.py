@@ -34,7 +34,8 @@ class Site:
 SITES = {
     "gradescope": Site("https://www.gradescope.com/login", "www.gradescope.com", "https://www.gradescope.com/account"),
     "piazza": Site("https://piazza.com/account/login", "piazza.com", "https://piazza.com/class"),
-    "canvas": Site("https://umd.instructure.com/", "umd.instructure.com", "https://umd.instructure.com/api/v1/users/self"),
+    # A normal page, not the API: Canvas can refuse API calls that come with a browser login.
+    "canvas": Site("https://umd.instructure.com/", "umd.instructure.com", "https://umd.instructure.com/profile"),
 }
 
 
