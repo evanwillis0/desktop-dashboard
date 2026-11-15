@@ -18,9 +18,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
 
-# Your Google accounts: dashboard label -> Chrome profile folder that's signed in to it.
+# Your Google accounts: dashboard label -> Chrome profile folder used to sign in and open links.
+# The labels are only names for the setup command; the dashboard shows each account's real address.
+# Both personal accounts live in the "Default" profile; Google's account chooser picks between them.
 ACCOUNTS = {
-    "personal": "Default",  # gmail.com
+    "personal": "Default",  # new personal email (the one Chrome's personal profile is signed in to)
+    "old-gmail": "Default",  # previous gmail.com address
     "umd": "Profile 1",  # terpmail.umd.edu
     "nova": "Profile 2",  # email.vccs.edu
 }
@@ -42,6 +45,15 @@ def token_key(label: str) -> str:
 
 def save_credentials(label: str, creds: Credentials) -> None:
     set_secret(token_key(label), creds.to_json())
+
+
+def save_email(label: str, email: str) -> None:
+    set_secret(f"google_email_{label}", email)
+
+
+def account_email(label: str) -> str | None:
+    """The address this account was connected as (used for tab names and Gmail links)."""
+    return get_secret(f"google_email_{label}")
 
 
 def load_credentials(label: str) -> Credentials:
