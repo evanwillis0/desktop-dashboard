@@ -49,10 +49,25 @@ export const updateState = (event, previous) => {
 
 // ---------- Helpers ----------
 
-// Open links in your default browser (a plain <a href> would load inside the widget).
-const openLink = (url) => {
+// Which Chrome profile each source's links open in. Folder names come from
+// ~/Library/Application Support/Google/Chrome/Local State:
+//   "Default" = personal (gmail.com), "Profile 1" = UMD (terpmail), "Profile 2" = NOVA (vccs.edu)
+// A source not listed here opens in your default browser.
+const CHROME_PROFILE = {
+  canvas: "Profile 1",
+};
+
+const shellQuote = (text) => `'${text.replace(/'/g, "'\\''")}'`;
+
+// Open links outside the widget (a plain <a href> would load inside the widget).
+const openLink = (url, source) => {
   if (!url || !url.startsWith("https://")) return;
-  run(`open '${url.replace(/'/g, "'\\''")}'`);
+  const profile = CHROME_PROFILE[source];
+  if (profile) {
+    run(`open -na "Google Chrome" --args --profile-directory=${shellQuote(profile)} ${shellQuote(url)}`);
+  } else {
+    run(`open ${shellQuote(url)}`);
+  }
 };
 
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -171,7 +186,7 @@ const CanvasCard = ({ source, refreshing, onRefresh }) => {
             <div
               key={item.url}
               style={{ ...styles.item, borderLeft: `3px solid ${urgencyColor(item.due)}` }}
-              onClick={() => openLink(item.url)}
+              onClick={() => openLink(item.url, "canvas")}
               title="Open in Canvas"
             >
               <div style={styles.itemTitle}>{item.title}</div>
