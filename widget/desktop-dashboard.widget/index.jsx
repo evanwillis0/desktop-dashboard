@@ -32,7 +32,7 @@ const refreshNow = async (dispatch) => {
   }
 };
 
-export const initialState = { data: null, offline: false, refreshing: false, gmailTab: null };
+export const initialState = { data: null, offline: false, refreshing: false, gmailTab: null, calendarOffset: 0 };
 
 export const updateState = (event, previous) => {
   switch (event.type) {
@@ -45,6 +45,8 @@ export const updateState = (event, previous) => {
       return { ...previous, refreshing: true };
     case "SELECT_GMAIL_TAB":
       return { ...previous, gmailTab: event.label };
+    case "SET_CALENDAR_OFFSET":
+      return { ...previous, calendarOffset: event.offset };
     default:
       return previous;
   }
@@ -386,65 +388,213 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
   );
 };
 
-// ----- Calendar -----
+// ----- Calendar (time grid) -----
 
-const MAX_EVENTS = 12;
+const CAL_DAYS = 3; // columns shown at once
+const CAL_MAX_OFFSET = 7 - CAL_DAYS; // the server sends 7 days of events
+const PX_PER_HOUR = 34;
+const GUTTER = 38; // width of the hour labels on the left
+const HOUR_MS = 3600000;
 
-// All-day events come as "2026-11-16" (a local date, not midnight UTC).
-const eventDate = (e) => (e.all_day ? new Date(`${e.start}T00:00:00`) : new Date(e.start));
-
-const dayHeading = (date) => {
-  const days = daysUntil(date);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Tomorrow";
-  return date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+const addDays = (date, n) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
 };
 
 const clock = (d) => d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
-const eventTime = (e) => {
-  if (e.all_day) return "All day";
-  const start = new Date(e.start);
-  const end = new Date(e.end);
-  if (start <= new Date() && end > new Date()) return `Now · until ${clock(end)}`;
-  return `${clock(start)} – ${clock(end)}`;
+const hourLabel = (h) => (h === 0 || h === 24 ? "12a" : h === 12 ? "12p" : h < 12 ? `${h}a` : `${h - 12}p`);
+
+const columnHeading = (day) => {
+  const days = daysUntil(day);
+  const weekday = days === 0 ? "Today" : days === 1 ? "Tomorrow" : day.toLocaleDateString(undefined, { weekday: "short" });
+  return { weekday, date: day.getDate() };
 };
 
-const CalendarCard = ({ source, refreshing, onRefresh }) => {
-  const events = (source && source.data && source.data.events) || [];
-  const shown = events.slice(0, MAX_EVENTS);
-  const days = [];
-  shown.forEach((e) => {
-    const heading = dayHeading(eventDate(e));
-    const last = days[days.length - 1];
-    if (last && last.heading === heading) last.events.push(e);
-    else days.push({ heading, events: [e] });
+// All-day events come as dates ("2026-11-16", end exclusive) in local time.
+const allDayOn = (e, day) => {
+  const start = new Date(`${e.start}T00:00:00`);
+  const end = new Date(`${e.end}T00:00:00`);
+  return start <= day && day < end;
+};
+
+// Timed events for one day, clipped to that day, with side-by-side "lanes" for overlaps.
+const layoutDay = (events, day) => {
+  const dayEnd = addDays(day, 1);
+  const items = events
+    .filter((e) => !e.all_day)
+    .map((e) => ({ e, start: new Date(e.start), end: new Date(e.end) }))
+    .filter((it) => it.end > day && it.start < dayEnd)
+    .map((it) => ({ ...it, start: it.start < day ? day : it.start, end: it.end > dayEnd ? dayEnd : it.end }))
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+
+  // Group events that overlap (directly or through a chain) and give each a lane in its group.
+  const placed = [];
+  let group = [];
+  let groupEnd = 0;
+  const finishGroup = () => {
+    const laneEnds = [];
+    group.forEach((it) => {
+      let lane = laneEnds.findIndex((end) => end <= it.start.getTime());
+      if (lane === -1) lane = laneEnds.push(0) - 1;
+      laneEnds[lane] = it.end.getTime();
+      it.lane = lane;
+    });
+    group.forEach((it) => placed.push({ ...it, lanes: laneEnds.length }));
+    group = [];
+  };
+  items.forEach((it) => {
+    if (group.length && it.start.getTime() >= groupEnd) finishGroup();
+    group.push(it);
+    groupEnd = Math.max(groupEnd, it.end.getTime());
   });
+  if (group.length) finishGroup();
+  return placed;
+};
+
+const navButton = {
+  cursor: "pointer",
+  padding: "2px 8px",
+  borderRadius: 6,
+  background: "rgba(255,255,255,0.08)",
+  fontSize: 12,
+  userSelect: "none",
+};
+
+const CalendarCard = ({ source, offset, onOffset, refreshing, onRefresh }) => {
+  const events = (source && source.data && source.data.events) || [];
+  const today = startOfDay(new Date());
+  const days = Array.from({ length: CAL_DAYS }, (_, i) => addDays(today, offset + i));
+  const columns = days.map((day) => ({
+    day,
+    timed: layoutDay(events, day),
+    allDay: events.filter((e) => e.all_day && allDayOn(e, day)),
+  }));
+
+  // Hour range: 8 AM to 8 PM, stretched to fit any earlier or later events.
+  let firstHour = 8;
+  let lastHour = 20;
+  columns.forEach(({ day, timed }) =>
+    timed.forEach((it) => {
+      firstHour = Math.min(firstHour, Math.floor((it.start - day) / HOUR_MS));
+      lastHour = Math.max(lastHour, Math.ceil((it.end - day) / HOUR_MS));
+    })
+  );
+  const gridHeight = (lastHour - firstHour) * PX_PER_HOUR;
+  const hours = Array.from({ length: lastHour - firstHour + 1 }, (_, i) => firstHour + i);
+  const topFor = (date, day) => ((date - day) / HOUR_MS - firstHour) * PX_PER_HOUR;
+  const now = new Date();
+  const hasAllDay = columns.some((c) => c.allDay.length > 0);
 
   return (
-    <Card title="Calendar" source={source} refreshing={refreshing} onRefresh={onRefresh}>
-      {source && source.status === "pending" && <div style={styles.empty}>Loading…</div>}
-      {source && source.status !== "pending" && events.length === 0 && (
-        <div style={styles.allClear}>✓ Nothing in the next 7 days</div>
-      )}
-      {days.map((day, i) => (
-        <div key={day.heading}>
-          <div style={{ ...styles.course, marginTop: i === 0 ? 0 : 12 }}>{day.heading}</div>
-          {day.events.map((e) => (
-            <Row
-              key={`${e.url}-${e.start}`}
-              color={e.color || GITHUB_BLUE}
-              title={e.title}
-              details={[eventTime(e), e.location, e.calendar].filter(Boolean).join(" · ")}
-              onClick={() => openLink(e.url, "calendar")}
-              tooltip={e.calendar}
-            />
+    <Card title="Calendar" source={source} refreshing={refreshing} onRefresh={onRefresh} width={470}>
+      {/* Navigation */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+        <span style={{ ...navButton, opacity: offset > 0 ? 1 : 0.35 }} onClick={() => onOffset(Math.max(0, offset - 1))}>‹</span>
+        <span style={navButton} onClick={() => onOffset(0)}>Today</span>
+        <span style={{ ...navButton, opacity: offset < CAL_MAX_OFFSET ? 1 : 0.35 }}
+              onClick={() => onOffset(Math.min(CAL_MAX_OFFSET, offset + 1))}>›</span>
+        <span style={{ ...styles.meta, marginLeft: "auto" }}>
+          {days[0].toLocaleDateString(undefined, { month: "short", day: "numeric" })} –{" "}
+          {days[CAL_DAYS - 1].toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        </span>
+      </div>
+
+      {/* Day headings */}
+      <div style={{ display: "flex", paddingLeft: GUTTER }}>
+        {columns.map(({ day }) => {
+          const { weekday, date } = columnHeading(day);
+          const isToday = daysUntil(day) === 0;
+          return (
+            <div key={day} style={{ flex: 1, textAlign: "center", paddingBottom: 6 }}>
+              <div style={{ fontSize: 11, color: isToday ? "#ff8a80" : "rgba(255,255,255,0.55)", fontWeight: 600,
+                            textTransform: "uppercase", letterSpacing: 0.6 }}>{weekday}</div>
+              <div style={{ fontSize: 18, fontWeight: 600, color: isToday ? "#ff8a80" : "#f2f3f5" }}>{date}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* All-day events */}
+      {hasAllDay && (
+        <div style={{ display: "flex", paddingLeft: GUTTER, marginBottom: 6 }}>
+          {columns.map(({ day, allDay }) => (
+            <div key={day} style={{ flex: 1, padding: "0 2px", display: "flex", flexDirection: "column", gap: 2 }}>
+              {allDay.map((e) => (
+                <div key={`${e.url}-${e.start}`} onClick={() => openLink(e.url, "calendar")} title={`${e.title} · ${e.calendar}`}
+                     style={{ ...styles.oneLine, fontSize: 10.5, padding: "2px 5px", borderRadius: 4, cursor: "pointer",
+                              background: `${e.color || GITHUB_BLUE}55`, borderLeft: `3px solid ${e.color || GITHUB_BLUE}` }}>
+                  {e.title}
+                </div>
+              ))}
+            </div>
           ))}
         </div>
-      ))}
-      {events.length > MAX_EVENTS && (
-        <div style={{ ...styles.itemDue, marginTop: 4 }}>+{events.length - MAX_EVENTS} more this week</div>
       )}
+
+      {/* Time grid */}
+      <div style={{ position: "relative", height: gridHeight, marginTop: 4 }}>
+        {hours.map((h) => (
+          <div key={h} style={{ position: "absolute", top: (h - firstHour) * PX_PER_HOUR, left: 0, right: 0 }}>
+            <div style={{ position: "absolute", left: 0, width: GUTTER - 6, top: -6, textAlign: "right",
+                          fontSize: 10, color: "rgba(255,255,255,0.45)" }}>{h < lastHour ? hourLabel(h) : ""}</div>
+            <div style={{ marginLeft: GUTTER, borderTop: "1px solid rgba(255,255,255,0.07)" }} />
+          </div>
+        ))}
+
+        <div style={{ position: "absolute", top: 0, bottom: 0, left: GUTTER, right: 0, display: "flex" }}>
+          {columns.map(({ day, timed }) => {
+            const isToday = daysUntil(day) === 0;
+            const nowTop = topFor(now, day);
+            return (
+              <div key={day} style={{ flex: 1, position: "relative", borderLeft: "1px solid rgba(255,255,255,0.07)" }}>
+                {timed.map((it) => {
+                  const top = topFor(it.start, day);
+                  const height = Math.max(16, topFor(it.end, day) - top - 2);
+                  const color = it.e.color || GITHUB_BLUE;
+                  const past = it.end < now;
+                  return (
+                    <div
+                      key={`${it.e.url}-${it.e.start}`}
+                      onClick={() => openLink(it.e.url, "calendar")}
+                      title={`${it.e.title}\n${clock(it.start)} – ${clock(it.end)}${it.e.location ? `\n${it.e.location}` : ""}\n${it.e.calendar}`}
+                      style={{
+                        position: "absolute",
+                        top,
+                        height,
+                        left: `calc(${(100 / it.lanes) * it.lane}% + 2px)`,
+                        width: `calc(${100 / it.lanes}% - 4px)`,
+                        background: `${color}${past ? "30" : "59"}`,
+                        borderLeft: `3px solid ${color}`,
+                        borderRadius: 5,
+                        padding: "2px 5px",
+                        overflow: "hidden",
+                        cursor: "pointer",
+                        opacity: past ? 0.6 : 1,
+                      }}
+                    >
+                      <div style={{ ...styles.oneLine, fontSize: 11, fontWeight: 600, lineHeight: "14px" }}>{it.e.title}</div>
+                      {height >= 30 && (
+                        <div style={{ ...styles.oneLine, fontSize: 10, lineHeight: "13px", color: "rgba(255,255,255,0.75)" }}>
+                          {clock(it.start)}{it.e.location ? ` · ${it.e.location}` : ""}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {isToday && nowTop >= 0 && nowTop <= gridHeight && (
+                  <div style={{ position: "absolute", top: nowTop, left: -4, right: 0, height: 2, background: "#ff5f57", zIndex: 2 }}>
+                    <div style={{ position: "absolute", left: -3, top: -3, width: 8, height: 8, borderRadius: 4, background: "#ff5f57" }} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {source && source.status === "pending" && <div style={{ ...styles.empty, marginTop: 8 }}>Loading…</div>}
     </Card>
   );
 };
@@ -460,7 +610,7 @@ export const className = `
   -webkit-font-smoothing: antialiased;
 `;
 
-export const render = ({ data, offline, refreshing, gmailTab }, dispatch) => {
+export const render = ({ data, offline, refreshing, gmailTab, calendarOffset }, dispatch) => {
   const onRefresh = () => refreshNow(dispatch);
   const column = { display: "flex", flexDirection: "column", gap: 16 };
 
@@ -479,7 +629,13 @@ export const render = ({ data, offline, refreshing, gmailTab }, dispatch) => {
     // Three columns: what's on today | what's due + code | mail.
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
       <div style={column}>
-        <CalendarCard source={data && data.calendar} refreshing={refreshing} onRefresh={onRefresh} />
+        <CalendarCard
+          source={data && data.calendar}
+          offset={calendarOffset}
+          onOffset={(offset) => dispatch({ type: "SET_CALENDAR_OFFSET", offset })}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
       </div>
       <div style={column}>
         <CanvasCard source={data && data.canvas} refreshing={refreshing} onRefresh={onRefresh} />

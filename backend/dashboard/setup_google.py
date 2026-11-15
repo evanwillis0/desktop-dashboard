@@ -4,8 +4,8 @@ Step 1, once: store the OAuth client file you downloaded from Google Cloud.
     ../.venv/bin/python -m dashboard.setup_google client ~/Downloads/client_secret_XXXX.json
 
 Step 2, once per account: sign in (opens Chrome in that account's profile).
+    ../.venv/bin/python -m dashboard.setup_google professional
     ../.venv/bin/python -m dashboard.setup_google personal
-    ../.venv/bin/python -m dashboard.setup_google old-gmail
     ../.venv/bin/python -m dashboard.setup_google umd
     ../.venv/bin/python -m dashboard.setup_google nova
 """

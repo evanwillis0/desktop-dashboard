@@ -19,10 +19,10 @@ SCOPES = [GMAIL_SCOPE, CALENDAR_SCOPE]
 
 # Your Google accounts: dashboard label -> Chrome profile folder used to sign in and open links.
 # The labels are only names for the setup command; the dashboard shows each account's real address.
-# Both personal accounts live in the "Default" profile; Google's account chooser picks between them.
+# Both gmail.com accounts live in the "Default" profile; Google's account chooser picks between them.
 ACCOUNTS = {
-    "personal": "Default",  # new personal email (the one Chrome's personal profile is signed in to)
-    "old-gmail": "Default",  # previous gmail.com address
+    "professional": "Default",  # gmail.com account used professionally
+    "personal": "Default",  # gmail.com account used personally
     "umd": "Profile 1",  # terpmail.umd.edu
     "nova": "Profile 2",  # email.vccs.edu
 }

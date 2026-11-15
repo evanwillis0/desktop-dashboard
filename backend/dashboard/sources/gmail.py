@@ -27,7 +27,7 @@ MAX_MESSAGES = 6  # shown on the card
 MAX_COUNTED = 100  # unread counts above this show as "99+"
 
 # Tab names shown on the card.
-DISPLAY_NAMES = {"personal": "Personal", "old-gmail": "Old Gmail", "umd": "UMD", "nova": "NOVA"}
+DISPLAY_NAMES = {"professional": "Professional", "personal": "Personal", "umd": "UMD", "nova": "NOVA"}
 
 
 def sender_name(from_header: str) -> str:
