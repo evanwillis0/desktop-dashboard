@@ -462,7 +462,10 @@ const navButton = {
   userSelect: "none",
 };
 
-const CalendarCard = ({ source, offset, onOffset, refreshing, onRefresh }) => {
+const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefresh }) => {
+  // Übersicht keeps the old state when it reloads new widget code, so a setting added later
+  // (like this one) can be missing. Treat anything that isn't a whole number as "today".
+  const offset = Number.isInteger(rawOffset) ? rawOffset : 0;
   const events = (source && source.data && source.data.events) || [];
   const today = startOfDay(new Date());
   const days = Array.from({ length: CAL_DAYS }, (_, i) => addDays(today, offset + i));

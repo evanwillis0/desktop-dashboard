@@ -13,6 +13,7 @@ Try it from the backend/ folder:
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from email.utils import parseaddr
+from urllib.parse import quote
 
 import httpx
 
@@ -37,9 +38,13 @@ def sender_name(from_header: str) -> str:
 
 
 def inbox_link(email: str, thread_id: str | None = None) -> str:
-    """Open Gmail as this exact account (matters when two accounts share a Chrome profile)."""
-    base = f"https://mail.google.com/mail/u/{email}/#inbox"
-    return f"{base}/{thread_id}" if thread_id else base
+    """Open Gmail as this exact account (matters when two accounts share a Chrome profile).
+
+    `authuser=` is Gmail's supported way to pick the account; `#all/<thread>` finds the
+    conversation wherever it is (inbox, archived, or labeled).
+    """
+    base = f"https://mail.google.com/mail/?authuser={quote(email)}"
+    return f"{base}#all/{thread_id}" if thread_id else f"{base}#inbox"
 
 
 def fetch_account(label: str) -> dict:
