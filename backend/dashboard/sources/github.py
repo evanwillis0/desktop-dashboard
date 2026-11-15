@@ -10,6 +10,7 @@ Try it from the backend/ folder:
 import re
 import shutil
 import subprocess
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -43,8 +44,9 @@ fragment pr on PullRequest {
 """
 
 QUERY = PR_FIELDS + """
-query {
+query($since: GitTimestamp!) {
   viewer {
+    id
     pullRequests(states: OPEN, first: 10, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { ...pr } }
     repositories(first: 3, ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
                  orderBy: {field: PUSHED_AT, direction: DESC}) {
@@ -52,7 +54,10 @@ query {
         nameWithOwner url pushedAt
         issues(states: OPEN) { totalCount }
         pullRequests(states: OPEN) { totalCount }
-        defaultBranchRef { target { ... on Commit { messageHeadline statusCheckRollup { state } } } }
+        defaultBranchRef { target { ... on Commit {
+          messageHeadline statusCheckRollup { state }
+          history(since: $since) { nodes { author { user { id } } } }
+        } } }
       }
     }
   }
@@ -138,19 +143,30 @@ def fetch() -> dict:
         notifications = client.get("/notifications", params={"per_page": 20})
         notifications.raise_for_status()
 
-        graphql = client.post("/graphql", json={"query": QUERY})
+        day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        graphql = client.post("/graphql", json={"query": QUERY, "variables": {"since": day_ago}})
         graphql.raise_for_status()
         body = graphql.json()
         if body.get("errors"):
             raise RuntimeError(f"GitHub query failed: {body['errors'][0].get('message', 'unknown error')}")
 
     data = body["data"]
+    # Commits you authored in the last 24 hours on your recently pushed repos' main branches.
+    # (GitHub's activity feed would be simpler but lags by hours.)
+    me = data["viewer"]["id"]
+    commits_today = 0
+    for repo in data["viewer"]["repositories"]["nodes"]:
+        head = (repo.get("defaultBranchRef") or {}).get("target") or {}
+        for commit in (head.get("history") or {}).get("nodes", []):
+            if ((commit.get("author") or {}).get("user") or {}).get("id") == me:
+                commits_today += 1
     review_requests = [parse_pr(n, "reviewer") for n in data["reviewRequests"]["nodes"] if n]
     mine = [parse_pr(n, "author") for n in data["viewer"]["pullRequests"]["nodes"]]
     return {
         "notifications": [parse_notification(n) for n in notifications.json()],
         "pull_requests": review_requests + mine,  # review requests first: they're waiting on you
         "repos": [parse_repo(n) for n in data["viewer"]["repositories"]["nodes"]],
+        "commits_today": commits_today,  # your commits in the last 24 hours
     }
 
 

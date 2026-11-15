@@ -5,9 +5,9 @@ import { run } from "uebersicht";
 
 const API = "http://127.0.0.1:8787";
 
-// Ask the server for new data every minute. (The server itself refreshes
-// each service on its own, slower timer, so this is cheap.)
-export const refreshFrequency = 60 * 1000;
+// Re-read the server's data every 15 seconds; this also keeps the center clock current.
+// (The server refreshes each service on its own, slower timer, so this is cheap.)
+export const refreshFrequency = 15 * 1000;
 
 // ---------- Data ----------
 
@@ -209,7 +209,7 @@ const Row = ({ color, title, details, onClick, tooltip }) => (
   </div>
 );
 
-const GitHubCard = ({ source, refreshing, onRefresh }) => {
+const GitHubCard = ({ source, refreshing, onRefresh, width }) => {
   const data = (source && source.data) || {};
   const notifications = data.notifications || [];
   const pullRequests = data.pull_requests || [];
@@ -217,7 +217,7 @@ const GitHubCard = ({ source, refreshing, onRefresh }) => {
   const loading = source && source.status === "pending";
 
   return (
-    <Card title="GitHub" source={source} refreshing={refreshing} onRefresh={onRefresh}>
+    <Card title="GitHub" source={source} refreshing={refreshing} onRefresh={onRefresh} width={width}>
       <div style={{ ...styles.course, marginTop: 0 }}>Needs you</div>
       {loading && <div style={styles.empty}>Loading…</div>}
       {!loading && notifications.length === 0 && pullRequests.length === 0 && (
@@ -506,6 +506,83 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
   );
 };
 
+// ----- Center circle: time, date, greeting, today's counts -----
+
+const NAME = "Evan";
+const CIRCLE_SIZE = 204;
+const SOON_HOURS = 48; // "due soon" = due within this many hours and not submitted
+
+const greetingFor = (hour) =>
+  hour < 5 ? "Up late" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : hour < 22 ? "Good evening" : "Up late";
+
+const sum = (items, pick) => items.reduce((total, item) => total + (pick(item) || 0), 0);
+
+const circleStyle = {
+  width: CIRCLE_SIZE,
+  height: CIRCLE_SIZE,
+  borderRadius: "50%",
+  alignSelf: "center",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  textAlign: "center",
+  background: "rgba(20, 22, 28, 0.62)",
+  backdropFilter: "blur(24px) saturate(140%)",
+  WebkitBackdropFilter: "blur(24px) saturate(140%)",
+  border: "1px solid rgba(255, 255, 255, 0.1)",
+  boxShadow: "0 10px 30px rgba(0, 0, 0, 0.25)",
+};
+
+const chipStyle = (active) => ({
+  fontSize: 11,
+  padding: "2px 7px",
+  borderRadius: 8,
+  background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
+  color: active ? "#f2f3f5" : "rgba(255,255,255,0.45)",
+  whiteSpace: "nowrap",
+});
+
+const CenterCircle = ({ data }) => {
+  const now = new Date();
+  const source = (name) => (data && data[name] && data[name].data) || null;
+
+  const accounts = (source("gmail") || {}).accounts || [];
+  const classes = (source("piazza") || {}).classes || [];
+  const soon = upcomingItems(source("canvas"), source("gradescope")).filter((item) => {
+    const hoursLeft = (new Date(item.due) - now) / 3600000;
+    return item.status !== "submitted" && hoursLeft > 0 && hoursLeft <= SOON_HOURS;
+  });
+
+  const counts = [
+    { icon: "✉", n: sum(accounts, (a) => a.unread_today), label: "new", tip: "Unread emails from the last 24 hours (all 4 inboxes)" },
+    { icon: "📝", n: soon.length, label: "due soon", tip: "Assignments due in the next 48 hours that aren't submitted" },
+    { icon: "⬆", n: (source("github") || {}).commits_today || 0, label: "commits", tip: "Your commits in the last 24 hours" },
+    { icon: "💬", n: sum(classes, (c) => c.new_today), label: "Piazza", tip: "Unread Piazza posts from the last 24 hours" },
+  ];
+
+  return (
+    <div style={circleStyle}>
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 }}>
+        {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+      </div>
+      <div style={{ fontSize: 44, fontWeight: 300, lineHeight: "50px", letterSpacing: -1 }}>
+        {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 10 }}>
+        {greetingFor(now.getHours())}, {NAME}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: 5, justifyContent: "center" }}>
+        {counts.map((c) => (
+          <span key={c.label} style={chipStyle(c.n > 0)} title={c.tip}>
+            {c.icon} {c.n} {c.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // ----- Piazza -----
 
 const PIAZZA_POSTS = 4;
@@ -561,8 +638,8 @@ const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
 
 const CAL_DAYS = 3; // columns shown at once
 const CAL_MAX_OFFSET = 7 - CAL_DAYS; // the server sends 7 days of events
-const PX_PER_HOUR = 28;
-const VISIBLE_UNTIL = 19; // the grid shows up to 7 PM; later hours are a scroll away
+const PX_PER_HOUR = 24;
+const VISIBLE_UNTIL = 17; // the grid shows up to 5 PM; later hours are a scroll away
 const SCROLL_ID = "dd-cal-scroll";
 
 const LATER_TAGS_ID = "dd-cal-later";
@@ -683,10 +760,10 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
     })
   );
   const gridHeight = (lastHour - firstHour) * PX_PER_HOUR;
-  // Only up to 7 PM is visible at once; the rest scrolls.
+  // Only up to VISIBLE_UNTIL (5 PM) is visible at once; the rest scrolls.
   const visibleHeight = Math.min(gridHeight, Math.max(VISIBLE_UNTIL - firstHour, 1) * PX_PER_HOUR);
   const scrolls = gridHeight > visibleHeight;
-  // Per day: how many events start at or after 7 PM (hidden until you scroll).
+  // Per day: how many events start at or after VISIBLE_UNTIL (hidden until you scroll).
   const laterCounts = columns.map(({ day, timed }) =>
     timed.filter((it) => (it.start - day) / HOUR_MS >= VISIBLE_UNTIL).length
   );
@@ -741,7 +818,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
         </div>
       )}
 
-      {/* Time grid: a scrolling window that shows up to 7 PM */}
+      {/* Time grid: a scrolling window that shows up to VISIBLE_UNTIL (5 PM) */}
       <div style={{ position: "relative", marginTop: 4 }}>
       <div id={SCROLL_ID} onScroll={onGridScroll}
            style={{ height: visibleHeight + 8, overflowY: scrolls ? "auto" : "hidden", overflowX: "hidden" }}>
@@ -807,7 +884,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
       </div>
       </div>
 
-      {/* "+N later" tags at the bottom of each day with events after 7 PM; click to scroll down */}
+      {/* "+N later" tags for days with events after VISIBLE_UNTIL; click to scroll down */}
       {scrolls && laterCounts.some((n) => n > 0) && (
         <div id={LATER_TAGS_ID}
              style={{ position: "absolute", bottom: 6, left: GUTTER, right: 10, display: "flex", pointerEvents: "none",
@@ -835,7 +912,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
 // Where the dashboard sits on the desktop, and its base text style.
 export const className = `
   top: 40px;
-  left: 48px;
+  left: 68px; /* centers the 1376pt-wide dashboard on a 1512pt screen */
   color: #f2f3f5;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -862,18 +939,8 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
   }
 
   return (
-    // Three columns: schedule + code | coursework | messages.
+    // Three columns: coursework | calendar, center circle, GitHub | messages.
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-      <div style={column}>
-        <CalendarCard
-          source={data && data.calendar}
-          offset={calendarOffset}
-          onOffset={(offset) => dispatch({ type: "SET_CALENDAR_OFFSET", offset })}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-        />
-        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} />
-      </div>
       <div style={column}>
         <CourseworkCard
           canvasSource={data && data.canvas}
@@ -881,6 +948,17 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
+      </div>
+      <div style={{ ...column, gap: 12 }}>
+        <CalendarCard
+          source={data && data.calendar}
+          offset={calendarOffset}
+          onOffset={(offset) => dispatch({ type: "SET_CALENDAR_OFFSET", offset })}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+        />
+        <CenterCircle data={data} />
+        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} width={470} />
       </div>
       <div style={column}>
         <GmailCard

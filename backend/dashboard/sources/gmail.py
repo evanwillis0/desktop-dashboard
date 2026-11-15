@@ -24,6 +24,8 @@ API = "https://gmail.googleapis.com/gmail/v1/users/me"
 # tabs those categories are empty, so nothing is filtered out there).
 RECENT_QUERY = "in:inbox newer_than:7d -category:promotions -category:social"
 UNREAD_QUERY = RECENT_QUERY + " is:unread"
+# Same filters, last 24 hours only (for the "new emails" count in the center circle).
+UNREAD_TODAY_QUERY = "in:inbox newer_than:1d is:unread -category:promotions -category:social"
 MAX_MESSAGES = 6  # shown on the card
 MAX_COUNTED = 100  # unread counts above this show as "99+"
 
@@ -56,6 +58,7 @@ def fetch_account(label: str) -> dict:
         "chrome_profile": ACCOUNTS[label],
         "inbox_url": inbox_link(email) if email else None,
         "unread_recent": 0,  # unread in the last 7 days (capped at MAX_COUNTED)
+        "unread_today": 0,  # unread in the last 24 hours (capped at MAX_COUNTED)
         "messages": [],
         "error": None,
     }
@@ -67,6 +70,10 @@ def fetch_account(label: str) -> dict:
             unread = client.get("/messages", params={"q": UNREAD_QUERY, "maxResults": MAX_COUNTED})
             unread.raise_for_status()
             result["unread_recent"] = len(unread.json().get("messages", []))
+
+            today = client.get("/messages", params={"q": UNREAD_TODAY_QUERY, "maxResults": MAX_COUNTED})
+            today.raise_for_status()
+            result["unread_today"] = len(today.json().get("messages", []))
 
             recent = client.get("/messages", params={"q": RECENT_QUERY, "maxResults": MAX_MESSAGES})
             recent.raise_for_status()

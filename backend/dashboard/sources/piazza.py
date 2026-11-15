@@ -80,6 +80,8 @@ def fetch() -> dict:
             feed = call(client, "network.get_my_feed",
                         {"nid": network["id"], "limit": FEED_SIZE, "offset": 0, "sort": "updated"})
             posts = [parse_post(p, network["id"]) for p in feed.get("feed", [])]
+            day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+            new_today = sum(1 for p in posts if p["unread"] and (p["updated"] or "") >= day_ago)
             # Piazza lists pinned posts first even when they're months old. Keep a pinned post
             # only if it's unread or changed in the last week; then order everything newest first.
             week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
@@ -91,6 +93,7 @@ def fetch() -> dict:
                 "term": network.get("term"),
                 "unread": sum(p["unread"] for p in posts),
                 "unread_capped": len(posts) == FEED_SIZE and all(p["unread"] for p in posts),
+                "new_today": new_today,  # unread posts updated in the last 24 hours
                 "url": f"https://piazza.com/class/{network['id']}",
                 "posts": posts[:KEEP],
             })
