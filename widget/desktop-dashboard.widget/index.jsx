@@ -684,8 +684,10 @@ const ClockCard = ({ data, refreshing, refreshDone, onRefresh }) => {
           <div style={{ fontSize: 64, fontWeight: 250, lineHeight: "68px", letterSpacing: -1.5 }}>
             {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
           </div>
-          {/* Fills the space right of the time and centers the bubble in it. */}
-          <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+          {/* Fills the space right of the time and centers the bubble in it. The negative
+              margin extends that space over the panel's 18px padding, so the bubble is
+              centered between the time and the panel's visible edge. */}
+          <div style={{ flex: 1, display: "flex", justifyContent: "center", marginRight: -18 }}>
             <RefreshBubble busy={refreshing} done={refreshDone} onRefresh={onRefresh} />
           </div>
         </div>
