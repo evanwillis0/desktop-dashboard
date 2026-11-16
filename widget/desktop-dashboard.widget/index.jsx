@@ -595,16 +595,17 @@ const REFRESH_CSS = `
     position: relative;
     overflow: hidden;
     flex: none;
-    width: 156px;
-    height: 60px;
-    border-radius: 30px;
+    box-sizing: border-box;
+    width: 176px;
+    height: 40px; /* a bit under the digits' height (about 45px at the clock's 64px font) */
+    border-radius: 20px;
     border: 2px solid ${INK};
     background: transparent;
     color: ${INK};
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 17px;
+    font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.3px;
     cursor: pointer;
@@ -679,11 +680,14 @@ const ClockCard = ({ data, refreshing, refreshDone, onRefresh }) => {
             {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "2px 0 14px" }}>
+        <div style={{ display: "flex", alignItems: "center", margin: "2px 0 14px" }}>
           <div style={{ fontSize: 64, fontWeight: 250, lineHeight: "68px", letterSpacing: -1.5 }}>
             {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
           </div>
-          <RefreshBubble busy={refreshing} done={refreshDone} onRefresh={onRefresh} />
+          {/* Fills the space right of the time and centers the bubble in it. */}
+          <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+            <RefreshBubble busy={refreshing} done={refreshDone} onRefresh={onRefresh} />
+          </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           {stats.map((s) => (
