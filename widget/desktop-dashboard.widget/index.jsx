@@ -103,9 +103,22 @@ export const updateState = (event, previous) => {
       return { ...previous, messagesView: event.view };
     case "NOTES_LOADED":
       // A new version remounts the text box with the saved text.
-      return { ...previous, notesLoaded: true, notesText: event.text, notesVersion: (previous.notesVersion || 0) + 1 };
+      return { ...previous, notesLoaded: true, notesText: event.text, notesEmpty: event.text === "",
+               notesVersion: (previous.notesVersion || 0) + 1 };
     case "NOTES_STATUS":
       return { ...previous, notesStatus: event.status };
+    case "NOTES_EMPTY":
+      return { ...previous, notesEmpty: event.empty };
+    case "NOTES_REPLACE":
+      // Remount the text box with new text (clear, or undo a clear).
+      return { ...previous, notesText: event.text, notesEmpty: event.text === "",
+               notesVersion: (previous.notesVersion || 0) + 1 };
+    case "NOTES_UNDO_OFFER":
+      return { ...previous, notesUndo: event.text, notesUndoToken: event.token };
+    case "NOTES_UNDO_EXPIRE":
+      // A timer only expires the undo it was set for (not a newer one).
+      if (event.token && event.token !== previous.notesUndoToken) return previous;
+      return { ...previous, notesUndo: null, notesUndoToken: null };
     default:
       return previous;
   }
@@ -725,13 +738,43 @@ const saveNotes = (text, dispatch) => {
 };
 
 const NOTES_STATUS_TEXT = { saving: "saving…", saved: "saved ✓", error: "⚠ not saved (server offline?)" };
+const NOTES_UNDO_MS = 6000; // how long "undo" stays after clearing
 
-const NotepadCard = ({ loaded, text, version, status, dispatch }) => (
+// Replace everything in the notepad (clear, or undo a clear) and save it.
+const replaceNotes = (text, dispatch) => {
+  dispatch({ type: "NOTES_REPLACE", text });
+  saveNotes(text, dispatch);
+};
+
+const clearNotes = (dispatch) => {
+  const box = document.querySelector(".dd-notes");
+  const previous = box ? box.value : "";
+  if (!previous) return;
+  replaceNotes("", dispatch);
+  const token = Date.now();
+  dispatch({ type: "NOTES_UNDO_OFFER", text: previous, token });
+  setTimeout(() => dispatch({ type: "NOTES_UNDO_EXPIRE", token }), NOTES_UNDO_MS);
+};
+
+const notesLink = { fontSize: 11, fontWeight: 500, color: INK_FAINT, cursor: "pointer", userSelect: "none" };
+
+const NotepadCard = ({ loaded, text, version, status, empty, undoText, dispatch }) => (
   <div style={{ ...styles.card, width: 390, flex: 1, minHeight: 150, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
     <div style={styles.gloss} />
     <div style={{ ...styles.content, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={styles.header}>
-        <div style={styles.title}>Notes</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <div style={styles.title}>Notes</div>
+          {loaded && undoText != null && (
+            <span style={{ ...notesLink, color: INK }} onClick={() => {
+              replaceNotes(undoText, dispatch);
+              dispatch({ type: "NOTES_UNDO_EXPIRE" });
+            }} title="Bring back the notes you just cleared">undo</span>
+          )}
+          {loaded && undoText == null && !empty && (
+            <span style={notesLink} onClick={() => clearNotes(dispatch)} title="Clear all notes (you can undo for a few seconds)">clear</span>
+          )}
+        </div>
         <div style={{ ...styles.meta, color: status === "error" ? WARN_AMBER : INK_FAINT }}>
           {loaded ? NOTES_STATUS_TEXT[status] || "saves as you type" : "loading…"}
         </div>
@@ -742,8 +785,11 @@ const NotepadCard = ({ loaded, text, version, status, dispatch }) => (
         defaultValue={text || ""}
         // Until the saved notes arrive, typing is blocked so an empty box can't overwrite them.
         readOnly={!loaded}
-        placeholder={loaded ? "Jot down notes or things to remember…" : "Loading your notes…"}
-        onInput={(event) => saveNotes(event.target.value, dispatch)}
+        placeholder="…"
+        onInput={(event) => {
+          if ((event.target.value === "") !== !!empty) dispatch({ type: "NOTES_EMPTY", empty: event.target.value === "" });
+          saveNotes(event.target.value, dispatch);
+        }}
         spellCheck={true}
         style={{
           flex: 1,
@@ -1427,6 +1473,8 @@ export const render = (state, dispatch) => {
           text={state.notesText}
           version={state.notesVersion}
           status={state.notesStatus}
+          empty={state.notesEmpty !== false} // missing (older saved state) counts as empty
+          undoText={typeof state.notesUndo === "string" ? state.notesUndo : null}
           dispatch={dispatch}
         />
       </div>
