@@ -44,7 +44,7 @@ const refreshNow = async (dispatch) => {
 // missing at runtime; every component must cope with them being undefined.
 export const initialState = {
   data: null, offline: false, refreshing: false, gmailTab: null, calendarOffset: 0, piazzaTab: null,
-  refreshStartedAt: null, refreshedAt: null,
+  refreshStartedAt: null, refreshedAt: null, leftCompact: false, githubOpen: false,
 };
 
 // A refresh started by a click counts as running until it finishes (not just until the next
@@ -74,6 +74,11 @@ export const updateState = (event, previous) => {
       return { ...previous, piazzaTab: event.id };
     case "SET_CALENDAR_OFFSET":
       return { ...previous, calendarOffset: event.offset };
+    case "SET_LEFT_COMPACT":
+      // Leaving compact mode also closes the GitHub dropdown, so next time starts folded.
+      return { ...previous, leftCompact: event.compact, githubOpen: event.compact ? previous.githubOpen : false };
+    case "TOGGLE_GITHUB":
+      return { ...previous, githubOpen: !previous.githubOpen };
     default:
       return previous;
   }
@@ -239,6 +244,42 @@ const Card = ({ title, source, refreshing, onRefresh, children, width }) => (
   </div>
 );
 
+// A panel whose body can fold away under its header (used by the left column: Coursework
+// and GitHub). The body animates between full height and zero with a grid-rows transition.
+// The data-* names let the left column measure each panel's full height (see fitLeftColumn).
+const FOLD_MS = 450;
+
+const FoldCard = ({ name, header, open, width, children }) => (
+  <div style={{ ...styles.card, width }} data-fold-card={name}>
+    <div style={styles.gloss} />
+    <div style={styles.content}>
+      <div data-fold-header={name}>{header}</div>
+      <div data-fold={name} style={{ display: "grid", gridTemplateRows: open ? "1fr" : "0fr",
+                                     transition: `grid-template-rows ${FOLD_MS}ms ease` }}>
+        <div data-fold-inner={name} style={{ overflow: "hidden", minHeight: 0 }}>
+          {/* The gap under the header lives inside the fold, so it folds away too. */}
+          <div style={{ paddingTop: 12 }}>{children}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+// The standard header (title, "updated X ago", ↻), with no bottom margin (FoldCard adds the gap).
+const CardHeader = ({ title, source, refreshing, onRefresh, onTitleClick, hint }) => (
+  <div style={{ ...styles.header, marginBottom: 0 }}>
+    <div style={{ ...styles.title, cursor: onTitleClick ? "pointer" : "default" }} onClick={onTitleClick}>{title}</div>
+    <div style={styles.meta}>
+      {hint ? <span style={{ cursor: "pointer" }} onClick={onTitleClick}>{hint}</span>
+            : <span>{refreshing ? "refreshing…" : updatedAgo(source && source.updated_at)}</span>}
+      <span style={styles.refresh} onClick={onRefresh} title="Refresh now">↻</span>
+    </div>
+  </div>
+);
+
+const SourceWarning = ({ source }) =>
+  source && source.status === "error" ? <div style={styles.warning}>⚠ Couldn't refresh: {source.error}</div> : null;
+
 const GITHUB_BLUE = "#6aa8ff";
 const repoName = (fullName) => fullName.split("/").pop();
 
@@ -269,15 +310,52 @@ const Row = ({ color, title, details, onClick, tooltip }) => (
   </div>
 );
 
-const GitHubCard = ({ source, refreshing, onRefresh, width }) => {
+// The GitHub panel's dropdown header, used when Coursework is too full for both panels:
+// about twice the refresh bubble's height, with a counter and a chevron.
+const DROPDOWN_HEADER_H = 46; // + the panel's 34px of padding and border = 80px when folded
+
+const chevronStyle = (open) => ({
+  width: 28,
+  height: 28,
+  borderRadius: 14,
+  border: `1.5px solid ${INK}`,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  flex: "none",
+  transform: open ? "rotate(180deg)" : "none",
+  transition: `transform ${FOLD_MS}ms ease`,
+});
+
+const GitHubCard = ({ source, refreshing, onRefresh, width, compact, open, onToggle }) => {
   const data = (source && source.data) || {};
   const notifications = data.notifications || [];
   const pullRequests = data.pull_requests || [];
   const repos = (data.repos || []).slice(0, 2);  // two keeps the left column clear of the Dock
   const loading = source && source.status === "pending";
+  const waiting = notifications.length + pullRequests.length; // everything under "Needs you"
+
+  const header = compact ? (
+    <div style={{ height: DROPDOWN_HEADER_H, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+         onClick={onToggle} title={open ? "Fold GitHub away" : "Show GitHub"}>
+      <div style={{ fontSize: 18, fontWeight: 650, letterSpacing: 0.2 }}>GitHub</div>
+      {waiting > 0 && (
+        <span style={{ ...badgeStyle, fontSize: 12, padding: "2px 8px", borderRadius: 10 }}
+              title="Unread notifications and open PRs">{badgeText(waiting)}</span>
+      )}
+      <div style={{ flex: 1 }} />
+      <div style={chevronStyle(open)}>
+        <svg width="12" height="8" viewBox="0 0 12 8" style={{ marginTop: 1 }}>
+          <path d="M1 1.5 L6 6.5 L11 1.5" fill="none" stroke={INK} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+    </div>
+  ) : (
+    <CardHeader title="GitHub" source={source} refreshing={refreshing} onRefresh={onRefresh} />
+  );
 
   return (
-    <Card title="GitHub" source={source} refreshing={refreshing} onRefresh={onRefresh} width={width}>
+    <FoldCard name="github" header={header} open={!compact || open} width={width}>
       <div style={{ ...styles.course, marginTop: 0 }}>Needs you</div>
       {loading && <div style={styles.empty}>Loading…</div>}
       {!loading && notifications.length === 0 && pullRequests.length === 0 && (
@@ -322,7 +400,8 @@ const GitHubCard = ({ source, refreshing, onRefresh, width }) => {
           tooltip={repo.last_commit || repo.name}
         />
       ))}
-    </Card>
+      <SourceWarning source={source} />
+    </FoldCard>
   );
 };
 
@@ -405,7 +484,15 @@ const itemDueLabel = (item) => {
   return `${item.allDay ? day : `${day}, ${clock(due)}`} · ${relativeDay(due)}`;
 };
 
-const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh }) => {
+// Each class shows at most this many assignments; more scroll inside that class.
+// Rows get fixed line heights so "two rows" is an exact height: 7 + 16 + 2 + 14 + 7 = 46px, plus 6px gap.
+const ROWS_PER_CLASS = 2;
+const COURSE_ROW_H = 46;
+const COURSE_ROW_GAP = 6;
+const courseRowTitle = { ...styles.itemTitle, ...styles.oneLine, lineHeight: "16px" };
+const courseRowDue = { ...styles.itemDue, ...styles.oneLine, lineHeight: "14px" };
+
+const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh, folded, onUnfold }) => {
   const canvas = canvasSource && canvasSource.data;
   const gradescope = gradescopeSource && gradescopeSource.data;
   const upcoming = upcomingItems(canvas, gradescope);
@@ -431,34 +518,48 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh 
   const title = `Coursework${gradescope && gradescope.term ? ` · ${gradescope.term}` : ""}`;
 
   return (
-    <Card title={title} source={source} refreshing={refreshing} onRefresh={onRefresh} width={370}>
+    <FoldCard
+      name="coursework"
+      open={!folded}
+      width={370}
+      header={
+        <CardHeader title={title} source={source} refreshing={refreshing} onRefresh={onRefresh}
+                    onTitleClick={folded ? onUnfold : undefined} hint={folded ? "show ▾" : null} />
+      }
+    >
       {loading && <div style={styles.empty}>Loading…</div>}
       {classKeys.map((key, i) => {
         const items = upcoming.filter((item) => item.course === key);
         const grade = grades[key];
+        const scrolls = items.length > ROWS_PER_CLASS;
         return (
           <div key={key}>
             <div style={{ ...styles.course, marginTop: i === 0 ? 0 : 12, display: "flex", justifyContent: "space-between" }}>
               <span>{courseLabel(key)}</span>
               <span style={{ textTransform: "none", letterSpacing: 0 }}>
                 {[items.length === 0 ? "nothing due" : null,
+                  scrolls ? `${items.length} due · scroll` : null,
                   grade && grade.score != null ? `${grade.score}%${grade.grade ? ` (${grade.grade})` : ""}` : null]
                   .filter(Boolean).join(" · ")}
               </span>
             </div>
-            {items.map((item) => (
-              <div key={item.key}
-                   style={{ ...styles.item, borderLeft: `3px solid ${item.status === "submitted" ? "#7fd49b" : urgencyColor(item.due)}` }}
-                   onClick={() => openLink(item.url, item.source)} title={`Open in ${SOURCE_NAMES[item.source]}`}>
-                <div style={{ ...styles.itemTitle, ...styles.oneLine }}>
-                  {item.isNew && pill("NEW", "#3b82f6")}
-                  {item.title}
+            <div className={scrolls ? "dd-scroll" : undefined}
+                 style={scrolls ? { maxHeight: ROWS_PER_CLASS * (COURSE_ROW_H + COURSE_ROW_GAP), overflowY: "auto", paddingRight: 4, marginRight: -4 } : undefined}>
+              {items.map((item) => (
+                <div key={item.key}
+                     style={{ ...styles.item, height: COURSE_ROW_H, boxSizing: "border-box", marginBottom: COURSE_ROW_GAP,
+                              borderLeft: `3px solid ${item.status === "submitted" ? "#7fd49b" : urgencyColor(item.due)}` }}
+                     onClick={() => openLink(item.url, item.source)} title={`Open in ${SOURCE_NAMES[item.source]}`}>
+                  <div style={courseRowTitle}>
+                    {item.isNew && pill("NEW", "#3b82f6")}
+                    {item.title}
+                  </div>
+                  <div style={courseRowDue}>
+                    {SOURCE_NAMES[item.source]} · {itemDueLabel(item)}{item.status === "submitted" ? " · ✓ submitted" : ""}
+                  </div>
                 </div>
-                <div style={{ ...styles.itemDue, ...styles.oneLine }}>
-                  {SOURCE_NAMES[item.source]} · {itemDueLabel(item)}{item.status === "submitted" ? " · ✓ submitted" : ""}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         );
       })}
@@ -477,7 +578,8 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh 
       {canvas && canvas.scores_error && (
         <div style={styles.warning}>⚠ Canvas grades: {canvas.scores_error}</div>
       )}
-    </Card>
+      <SourceWarning source={source} />
+    </FoldCard>
   );
 };
 
@@ -1034,6 +1136,39 @@ const HALLWAY_ANGLE = 7; // degrees the side columns turn toward the middle (sub
 const PERSPECTIVE = 1250; // viewing distance in px: smaller = deeper 3D effect (was 1600)
 const SIDE_LIFT = 20; // how much higher the side columns sit than the middle one
 
+// ----- Left column fit: GitHub turns into a dropdown when Coursework is too full -----
+
+const DOCK_CLEARANCE = 44; // keep the left column's bottom this far above the bottom of the desktop
+const COLUMN_GAP = 16;
+
+// Full (unfolded) height of a FoldCard, with the standard header: the card's own padding and
+// border, plus the standard header's height, plus everything in its body (scrollHeight counts
+// the body even while it's folded away).
+const fullHeight = (column, name, standardHeaderH) => {
+  const card = column.querySelector(`[data-fold-card="${name}"]`);
+  const header = column.querySelector(`[data-fold-header="${name}"]`);
+  const fold = column.querySelector(`[data-fold="${name}"]`);
+  const inner = column.querySelector(`[data-fold-inner="${name}"]`);
+  if (!card || !header || !fold || !inner) return 0;
+  return card.offsetHeight - header.offsetHeight - fold.offsetHeight + standardHeaderH + inner.scrollHeight;
+};
+
+// Called after each render: would both panels, fully open, run past the Dock line?
+// Only dispatches when the answer changes, so it can't loop.
+const fitLeftColumn = (column, compactNow, dispatch) => {
+  // A plain timer, not requestAnimationFrame: macOS can pause animation frames for a window
+  // that's fully covered, which the desktop usually is.
+  setTimeout(() => {
+    if (!column.isConnected) return;
+    const courseworkHeader = column.querySelector('[data-fold-header="coursework"]');
+    if (!courseworkHeader) return;
+    const standardHeaderH = courseworkHeader.offsetHeight; // GitHub's normal header is the same
+    const total = fullHeight(column, "coursework", standardHeaderH) + COLUMN_GAP + fullHeight(column, "github", standardHeaderH);
+    const compact = column.getBoundingClientRect().top + total > window.innerHeight - DOCK_CLEARANCE;
+    if (compact !== compactNow) dispatch({ type: "SET_LEFT_COMPACT", compact });
+  }, 0);
+};
+
 // Where the dashboard sits on the desktop, and its base text style.
 export const className = `
   top: 40px;
@@ -1046,11 +1181,16 @@ export const className = `
   #dd-cal-scroll::-webkit-scrollbar { width: 5px; }
   #dd-cal-scroll::-webkit-scrollbar-thumb { background: rgba(28, 30, 34, 0.25); border-radius: 3px; }
   #dd-cal-scroll::-webkit-scrollbar-track { background: transparent; }
+  .dd-scroll::-webkit-scrollbar { width: 4px; }
+  .dd-scroll::-webkit-scrollbar-thumb { background: rgba(28, 30, 34, 0.25); border-radius: 2px; }
+  .dd-scroll::-webkit-scrollbar-track { background: transparent; }
 `;
 
 export const render = (state, dispatch) => {
   const { data, offline, gmailTab, calendarOffset, piazzaTab } = state;
   const refreshing = isRefreshing(state);
+  const compact = !!state.leftCompact; // (both may be missing in state saved by an older version)
+  const githubOpen = !!state.githubOpen;
   const refreshDone = !refreshing && Number.isFinite(state.refreshedAt) && Date.now() - state.refreshedAt < DONE_MS + 500;
   const onRefresh = () => {
     if (!refreshing) refreshNow(dispatch); // ignore extra clicks while one is running
@@ -1078,14 +1218,27 @@ export const render = (state, dispatch) => {
     // Three columns: coursework + GitHub | calendar + center circle | messages.
     // `perspective` gives the side columns' rotation real depth (smaller = stronger effect).
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start", perspective: PERSPECTIVE, perspectiveOrigin: "50% 45%" }}>
-      <div style={leftWall}>
+      {/* Left: when Coursework is too full for both panels (leftCompact), GitHub becomes a
+          dropdown header. Opening it folds Coursework up under its header, so GitHub grows
+          upward into that space instead of running off the bottom of the screen. */}
+      <div style={leftWall} ref={(el) => el && fitLeftColumn(el, compact, dispatch)}>
         <CourseworkCard
           canvasSource={data && data.canvas}
           gradescopeSource={data && data.gradescope}
           refreshing={refreshing}
           onRefresh={onRefresh}
+          folded={compact && githubOpen}
+          onUnfold={() => dispatch({ type: "TOGGLE_GITHUB" })}
         />
-        <GitHubCard source={data && data.github} refreshing={refreshing} onRefresh={onRefresh} width={370} />
+        <GitHubCard
+          source={data && data.github}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          width={370}
+          compact={compact}
+          open={githubOpen}
+          onToggle={() => dispatch({ type: "TOGGLE_GITHUB" })}
+        />
       </div>
       <div style={{ ...column, gap: 12 }}>
         <CalendarCard
