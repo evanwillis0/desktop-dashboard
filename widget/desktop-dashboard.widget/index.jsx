@@ -954,6 +954,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
 
 const HALLWAY_ANGLE = 7; // degrees the side columns turn toward the middle (subtle)
 const PERSPECTIVE = 1250; // viewing distance in px: smaller = deeper 3D effect (was 1600)
+const SIDE_LIFT = 20; // how much higher the side columns sit than the middle one
 
 // Where the dashboard sits on the desktop, and its base text style.
 export const className = `
@@ -974,8 +975,10 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
   const column = { display: "flex", flexDirection: "column", gap: 16 };
   // Hallway effect: the side columns turn slightly toward the middle, like walls you're
   // looking down. Each pivots on its outer edge, so its inner edge recedes.
-  const leftWall = { ...column, transform: `rotateY(${HALLWAY_ANGLE}deg)`, transformOrigin: "left center" };
-  const rightWall = { ...column, transform: `rotateY(-${HALLWAY_ANGLE}deg)`, transformOrigin: "right center" };
+  // They also sit SIDE_LIFT px higher than the middle column.
+  const wall = { ...column, marginTop: -SIDE_LIFT };
+  const leftWall = { ...wall, transform: `rotateY(${HALLWAY_ANGLE}deg)`, transformOrigin: "left center" };
+  const rightWall = { ...wall, transform: `rotateY(-${HALLWAY_ANGLE}deg)`, transformOrigin: "right center" };
 
   if (offline && !data) {
     return (
