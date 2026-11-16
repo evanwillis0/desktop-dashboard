@@ -140,25 +140,30 @@ const styles = {
     padding: "16px 18px",
     borderRadius: 16,
     color: INK,
-    background: "linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(241,243,246,0.94) 55%, rgba(228,231,236,0.93) 100%)",
-    backdropFilter: "blur(24px) saturate(140%)",
-    WebkitBackdropFilter: "blur(24px) saturate(140%)",
-    border: "1px solid rgba(255, 255, 255, 0.85)",
+    // See-through frosted glass: lighter fill, stronger blur so text stays readable over the wallpaper.
+    background: "linear-gradient(180deg, rgba(255,255,255,0.78) 0%, rgba(244,246,249,0.66) 50%, rgba(232,235,240,0.6) 100%)",
+    backdropFilter: "blur(30px) saturate(170%)",
+    WebkitBackdropFilter: "blur(30px) saturate(170%)",
+    border: "1px solid rgba(255, 255, 255, 0.9)",
     boxShadow: [
-      "inset 0 1px 0 rgba(255,255,255,1)", // bright top edge
-      "inset 0 -1px 0 rgba(0,0,0,0.06)", // soft bottom edge
-      "0 14px 34px rgba(0,0,0,0.30)", // lift off the wallpaper
+      "inset 0 2px 0 rgba(255,255,255,0.95)", // crisp bright top edge
+      "inset 0 0 0 1px rgba(255,255,255,0.35)", // glassy rim all around
+      "inset 0 -1px 0 rgba(0,0,0,0.08)", // soft bottom edge
+      "0 16px 38px rgba(0,0,0,0.30)", // lift off the wallpaper
       "0 2px 6px rgba(0,0,0,0.14)",
     ].join(", "),
   },
-  // The gloss: a soft white sheen over the top half of the panel.
+  // The gloss: a diagonal light streak (like light catching glass) over a strong top sheen.
   gloss: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
-    height: "52%",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.75) 0%, rgba(255,255,255,0.18) 60%, rgba(255,255,255,0) 100%)",
+    bottom: 0,
+    background: [
+      "linear-gradient(115deg, rgba(255,255,255,0) 28%, rgba(255,255,255,0.32) 38%, rgba(255,255,255,0.08) 46%, rgba(255,255,255,0) 52%)",
+      "linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.35) 22%, rgba(255,255,255,0.08) 45%, rgba(255,255,255,0) 60%)",
+    ].join(", "),
     pointerEvents: "none",
   },
   content: { position: "relative" }, // sits above the gloss
@@ -948,6 +953,7 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
 // ---------- Layout ----------
 
 const HALLWAY_ANGLE = 7; // degrees the side columns turn toward the middle (subtle)
+const PERSPECTIVE = 1250; // viewing distance in px: smaller = deeper 3D effect (was 1600)
 
 // Where the dashboard sits on the desktop, and its base text style.
 export const className = `
@@ -985,7 +991,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
   return (
     // Three columns: coursework + GitHub | calendar + center circle | messages.
     // `perspective` gives the side columns' rotation real depth (smaller = stronger effect).
-    <div style={{ display: "flex", gap: 16, alignItems: "flex-start", perspective: 1600, perspectiveOrigin: "50% 45%" }}>
+    <div style={{ display: "flex", gap: 16, alignItems: "flex-start", perspective: PERSPECTIVE, perspectiveOrigin: "50% 45%" }}>
       <div style={leftWall}>
         <CourseworkCard
           canvasSource={data && data.canvas}
