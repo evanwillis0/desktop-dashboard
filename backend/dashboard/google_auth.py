@@ -6,6 +6,7 @@ Access is read-only: Gmail and Calendar can be read, never changed or sent from.
 """
 
 import json
+import threading
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -69,19 +70,27 @@ def account_email(label: str) -> str | None:
     return get_secret(f"google_email_{label}")
 
 
+# One lock per account. Gmail and Calendar both use the UMD account and can run at the same
+# time (the widget's Refresh button refreshes everything at once); without this, both would
+# renew an expired token and save it simultaneously. With it, the second waits and then
+# finds the token the first one just saved.
+_account_locks = {label: threading.Lock() for label in ACCOUNTS}
+
+
 def load_credentials(label: str) -> Credentials:
     """Credentials for one account, refreshed if the short-lived access token expired."""
-    raw = get_secret(token_key(label))
-    if not raw:
-        raise RuntimeError(f"Google account '{label}' isn't connected. Run: {SETUP_HINT} {label}")
+    with _account_locks.get(label) or threading.Lock():
+        raw = get_secret(token_key(label))
+        if not raw:
+            raise RuntimeError(f"Google account '{label}' isn't connected. Run: {SETUP_HINT} {label}")
 
-    # Use the saved (granted) permissions, not SCOPES: asking to refresh a permission
-    # you never allowed would make Google reject the refresh.
-    creds = Credentials.from_authorized_user_info(json.loads(raw))
-    if not creds.valid:
-        try:
-            creds.refresh(Request())
-        except RefreshError:
-            raise RuntimeError(f"Google sign-in for '{label}' expired or was revoked. Run: {SETUP_HINT} {label}")
-        save_credentials(label, creds)
-    return creds
+        # Use the saved (granted) permissions, not SCOPES: asking to refresh a permission
+        # you never allowed would make Google reject the refresh.
+        creds = Credentials.from_authorized_user_info(json.loads(raw))
+        if not creds.valid:
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                raise RuntimeError(f"Google sign-in for '{label}' expired or was revoked. Run: {SETUP_HINT} {label}")
+            save_credentials(label, creds)
+        return creds
