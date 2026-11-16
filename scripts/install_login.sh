@@ -1,11 +1,13 @@
 #!/bin/bash
 # Set up the dashboard to start automatically when you log in.
 #
-# Installs two launchd agents (macOS's built-in way to run things at login) into ~/Library/LaunchAgents:
+# Installs four launchd agents (macOS's built-in way to run things at login) into ~/Library/LaunchAgents:
 #   local.desktop-dashboard.server  runs the Python server in the background; restarts it if it crashes
 #   local.desktop-dashboard.login   runs scripts/at_login.sh once per login (open Übersicht, hide apps)
 #   local.desktop-dashboard.watchdog runs scripts/watchdog.sh every 2 minutes (restarts Übersicht if its
 #                                    widget server stops, so the desktop never stays blank)
+#   local.desktop-dashboard.unlock   runs build/unlock-watcher (compiled here from scripts/unlock_watcher.swift):
+#                                    shows the desktop when you come back after a break of 5+ minutes
 #
 # Safe to run again (it replaces the old agents). Undo with scripts/uninstall_login.sh.
 # Logs go to ~/Library/Logs/desktop-dashboard/.
@@ -18,10 +20,36 @@ LOGS="$HOME/Library/Logs/desktop-dashboard"
 SERVER_LABEL="local.desktop-dashboard.server"
 LOGIN_LABEL="local.desktop-dashboard.login"
 WATCHDOG_LABEL="local.desktop-dashboard.watchdog"
+UNLOCK_LABEL="local.desktop-dashboard.unlock"
+UNLOCK_MINUTES=5
 DOMAIN="gui/$(id -u)"
 
 mkdir -p "$AGENTS" "$LOGS"
 chmod +x "$PROJECT/scripts/at_login.sh" "$PROJECT/scripts/watchdog.sh"
+
+# Compile the unlock watcher (uses Apple's Command Line Tools, which provide swiftc).
+mkdir -p "$PROJECT/build"
+swiftc -O "$PROJECT/scripts/unlock_watcher.swift" -o "$PROJECT/build/unlock-watcher"
+
+cat > "$AGENTS/$UNLOCK_LABEL.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$UNLOCK_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$PROJECT/build/unlock-watcher</string>
+    <string>$UNLOCK_MINUTES</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$LOGS/unlock.log</string>
+  <key>StandardErrorPath</key><string>$LOGS/unlock.log</string>
+</dict>
+</plist>
+EOF
 
 cat > "$AGENTS/$WATCHDOG_LABEL.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -77,7 +105,7 @@ cat > "$AGENTS/$LOGIN_LABEL.plist" <<EOF
 </plist>
 EOF
 
-plutil -lint "$AGENTS/$SERVER_LABEL.plist" "$AGENTS/$LOGIN_LABEL.plist" "$AGENTS/$WATCHDOG_LABEL.plist"
+plutil -lint "$AGENTS/$SERVER_LABEL.plist" "$AGENTS/$LOGIN_LABEL.plist" "$AGENTS/$WATCHDOG_LABEL.plist" "$AGENTS/$UNLOCK_LABEL.plist"
 
 # Unload an agent (if loaded), wait until launchd has really let go of it, then load the
 # new version. Loading too soon fails with "Bootstrap failed: 5".
@@ -94,8 +122,12 @@ reload_agent() {
 # Start the watchdog now (it only acts if Übersicht's widget server is down).
 reload_agent "$WATCHDOG_LABEL"
 
+# Start the unlock watcher now (it only acts when you come back from a break).
+reload_agent "$UNLOCK_LABEL"
+
 # Start the server now. (The login agent is NOT started now, since it would hide your
 # apps right away; launchd runs it automatically the next time you log in.)
 reload_agent "$SERVER_LABEL"
 
 echo "Installed. Server is running in the background; Übersicht + hide-apps will run at your next login."
+echo "The desktop will show when you come back after ${UNLOCK_MINUTES}+ minutes away."

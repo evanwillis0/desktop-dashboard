@@ -16,5 +16,8 @@ data/*
 *token*.json
 client_secret*.json
 
+# Compiled helpers (built by scripts/install_login.sh)
+build/
+
 # macOS
 .DS_Store
