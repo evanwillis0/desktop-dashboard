@@ -23,30 +23,51 @@ const loadAll = async (dispatch) => {
 
 export const command = loadAll;
 
+const MIN_REFRESH_MS = 1200; // keep the refresh animation on at least this long, so it never just flickers
+const DONE_MS = 1800; // how long the bubble says "Updated ✓" afterwards
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const refreshNow = async (dispatch) => {
-  dispatch({ type: "REFRESHING" });
+  dispatch({ type: "REFRESHING", at: Date.now() });
   try {
-    await fetch(`${API}/api/refresh`, { method: "POST" });
-  } finally {
-    await loadAll(dispatch);
+    await Promise.all([fetch(`${API}/api/refresh`, { method: "POST" }), wait(MIN_REFRESH_MS)]);
+  } catch (error) {
+    // Server unreachable; loadAll below shows the offline state.
   }
+  await loadAll(dispatch);
+  dispatch({ type: "REFRESHED", at: Date.now() });
+  setTimeout(() => dispatch({ type: "REFRESH_SETTLED" }), DONE_MS);
 };
 
 // Note: Übersicht keeps old state when the code changes, so new fields here may be
 // missing at runtime; every component must cope with them being undefined.
 export const initialState = {
   data: null, offline: false, refreshing: false, gmailTab: null, calendarOffset: 0, piazzaTab: null,
+  refreshStartedAt: null, refreshedAt: null,
 };
+
+// A refresh started by a click counts as running until it finishes (not just until the next
+// 15-second reload), but never longer than this, in case the code reloaded mid-refresh.
+const REFRESH_TIMEOUT_MS = 90 * 1000;
+
+const isRefreshing = (state) =>
+  !!state.refreshing && Number.isFinite(state.refreshStartedAt) && Date.now() - state.refreshStartedAt < REFRESH_TIMEOUT_MS;
 
 export const updateState = (event, previous) => {
   switch (event.type) {
     case "DATA":
       // Keep UI choices (like the selected Gmail tab) when new data arrives.
-      return { ...previous, data: event.data, offline: false, refreshing: false };
+      // (A click-started refresh stays on until REFRESHED, even if a regular reload lands first.)
+      return { ...previous, data: event.data, offline: false };
     case "OFFLINE":
-      return { ...previous, offline: true, refreshing: false };
+      return { ...previous, offline: true };
     case "REFRESHING":
-      return { ...previous, refreshing: true };
+      return { ...previous, refreshing: true, refreshStartedAt: event.at, refreshedAt: null };
+    case "REFRESHED":
+      return { ...previous, refreshing: false, refreshedAt: event.at };
+    case "REFRESH_SETTLED":
+      return { ...previous, refreshedAt: null };
     case "SELECT_GMAIL_TAB":
       return { ...previous, gmailTab: event.label };
     case "SELECT_PIAZZA_TAB":
@@ -563,7 +584,69 @@ const statTile = (color, active) => ({
   borderLeft: `3px solid ${active ? color : NEUTRAL_EDGE}`,
 });
 
-const ClockCard = ({ data }) => {
+// The big refresh bubble next to the time. Plain CSS (not inline styles) because it needs
+// :hover, :active and keyframe animations.
+//   resting:    black outline, black text
+//   hover:      black bubble, white text
+//   refreshing: stays black; a light sweeps across it and a soft ring pulses outward
+//   done:       a quick pop with "Updated ✓", then back to resting
+const REFRESH_CSS = `
+  .dd-refresh {
+    position: relative;
+    overflow: hidden;
+    flex: none;
+    width: 156px;
+    height: 60px;
+    border-radius: 30px;
+    border: 2px solid ${INK};
+    background: transparent;
+    color: ${INK};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.18s ease, color 0.18s ease, transform 0.12s ease;
+  }
+  .dd-refresh:hover, .dd-refresh.is-busy, .dd-refresh.is-done {
+    background: ${INK};
+    color: #fff;
+  }
+  .dd-refresh:active { transform: scale(0.95); }
+  .dd-refresh.is-busy { cursor: progress; animation: dd-ring 1.3s ease-out infinite; }
+  .dd-refresh.is-busy::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -60%;
+    width: 50%;
+    background: linear-gradient(100deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0) 100%);
+    animation: dd-sweep 1.1s ease-in-out infinite;
+  }
+  .dd-refresh.is-done { animation: dd-pop 0.45s ease-out; }
+  @keyframes dd-sweep { from { left: -60%; } to { left: 110%; } }
+  @keyframes dd-ring {
+    0% { box-shadow: 0 0 0 0 rgba(28, 30, 34, 0.45); }
+    100% { box-shadow: 0 0 0 14px rgba(28, 30, 34, 0); }
+  }
+  @keyframes dd-pop { 0% { transform: scale(0.94); } 55% { transform: scale(1.06); } 100% { transform: scale(1); } }
+`;
+
+const RefreshBubble = ({ busy, done, onRefresh }) => (
+  <div
+    className={`dd-refresh${busy ? " is-busy" : done ? " is-done" : ""}`}
+    onClick={busy ? undefined : onRefresh}
+    title="Refresh every source now"
+  >
+    {busy ? "Refreshing…" : done ? "Updated ✓" : "Refresh"}
+  </div>
+);
+
+const ClockCard = ({ data, refreshing, refreshDone, onRefresh }) => {
   const now = new Date();
   const source = (name) => (data && data[name] && data[name].data) || null;
 
@@ -587,6 +670,7 @@ const ClockCard = ({ data }) => {
 
   return (
     <div style={{ ...styles.card, width: 470 }}>
+      <style>{REFRESH_CSS}</style>
       <div style={styles.gloss} />
       <div style={styles.content}>
         <div style={styles.header}>
@@ -595,8 +679,11 @@ const ClockCard = ({ data }) => {
             {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
           </div>
         </div>
-        <div style={{ fontSize: 64, fontWeight: 250, lineHeight: "68px", letterSpacing: -1.5, margin: "2px 0 14px" }}>
-          {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "2px 0 14px" }}>
+          <div style={{ fontSize: 64, fontWeight: 250, lineHeight: "68px", letterSpacing: -1.5 }}>
+            {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+          </div>
+          <RefreshBubble busy={refreshing} done={refreshDone} onRefresh={onRefresh} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           {stats.map((s) => (
@@ -955,8 +1042,13 @@ export const className = `
   #dd-cal-scroll::-webkit-scrollbar-track { background: transparent; }
 `;
 
-export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, piazzaTab }, dispatch) => {
-  const onRefresh = () => refreshNow(dispatch);
+export const render = (state, dispatch) => {
+  const { data, offline, gmailTab, calendarOffset, piazzaTab } = state;
+  const refreshing = isRefreshing(state);
+  const refreshDone = !refreshing && Number.isFinite(state.refreshedAt) && Date.now() - state.refreshedAt < DONE_MS + 500;
+  const onRefresh = () => {
+    if (!refreshing) refreshNow(dispatch); // ignore extra clicks while one is running
+  };
   const column = { display: "flex", flexDirection: "column", gap: 16 };
   // Hallway effect: the side columns turn slightly toward the middle, like walls you're
   // looking down. Each pivots on its outer edge, so its inner edge recedes.
@@ -997,7 +1089,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
-        <ClockCard data={data} />
+        <ClockCard data={data} refreshing={refreshing} refreshDone={refreshDone} onRefresh={onRefresh} />
       </div>
       <div style={rightWall}>
         <GmailCard
