@@ -545,12 +545,9 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
   );
 };
 
-// ----- Center circle: time, date, greeting, today's counts -----
+// ----- Clock panel: greeting, date, time, today's counts -----
 
 const NAME = "Evan";
-const CIRCLE_SIZE = 370; // fills the space under the calendar
-const CIRCLE_SCALE = CIRCLE_SIZE / 204; // text sizes below were designed for a 204px circle
-const px = (n) => Math.round(n * CIRCLE_SCALE);
 const SOON_HOURS = 48; // "due soon" = due within this many hours and not submitted
 
 const greetingFor = (hour) =>
@@ -558,35 +555,15 @@ const greetingFor = (hour) =>
 
 const sum = (items, pick) => items.reduce((total, item) => total + (pick(item) || 0), 0);
 
-const circleStyle = {
-  width: CIRCLE_SIZE,
-  height: CIRCLE_SIZE,
-  borderRadius: "50%",
-  alignSelf: "center",
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  textAlign: "center",
-  background: "rgba(20, 22, 28, 0.62)",
-  backdropFilter: "blur(24px) saturate(140%)",
-  WebkitBackdropFilter: "blur(24px) saturate(140%)",
-  border: "1px solid rgba(255, 255, 255, 0.1)",
-  boxShadow: "0 10px 30px rgba(0, 0, 0, 0.25)",
-};
-
-// Chips grow less than the clock: the bottom row sits where the circle is narrowest,
-// so full scaling would push them past the edge.
-const chipStyle = (active) => ({
-  fontSize: 14,
-  padding: "3px 9px",
-  borderRadius: 10,
-  background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
-  color: active ? "#f2f3f5" : "rgba(255,255,255,0.45)",
-  whiteSpace: "nowrap",
+const statTile = (color, active) => ({
+  ...styles.item,
+  cursor: "default",
+  marginBottom: 0,
+  padding: "10px 12px",
+  borderLeft: `3px solid ${active ? color : NEUTRAL_EDGE}`,
 });
 
-const CenterCircle = ({ data }) => {
+const ClockCard = ({ data }) => {
   const now = new Date();
   const source = (name) => (data && data[name] && data[name].data) || null;
 
@@ -597,30 +574,38 @@ const CenterCircle = ({ data }) => {
     return item.status !== "submitted" && hoursLeft > 0 && hoursLeft <= SOON_HOURS;
   });
 
-  const counts = [
-    { icon: "✉", n: sum(accounts, (a) => a.unread_today), label: "new", tip: "Unread emails from the last 24 hours (all 4 inboxes)" },
-    { icon: "📝", n: soon.length, label: "due soon", tip: "Assignments due in the next 48 hours that aren't submitted" },
-    { icon: "⬆", n: (source("github") || {}).commits_today || 0, label: "commits", tip: "Your commits in the last 24 hours" },
-    { icon: "💬", n: sum(classes, (c) => c.new_today), label: "Piazza", tip: "Unread Piazza posts from the last 24 hours" },
+  const stats = [
+    { n: sum(accounts, (a) => a.unread_today), label: "new emails", color: GITHUB_BLUE,
+      tip: "Unread emails from the last 24 hours (all 4 inboxes)" },
+    { n: soon.length, label: "due in 48 hours", color: "#ff6b6b",
+      tip: "Assignments due in the next 48 hours that aren't submitted" },
+    { n: (source("github") || {}).commits_today || 0, label: "commits today", color: "#7fd49b",
+      tip: "Your commits in the last 24 hours" },
+    { n: sum(classes, (c) => c.new_today), label: "new Piazza posts", color: "#ffb547",
+      tip: "Unread Piazza posts from the last 24 hours" },
   ];
 
   return (
-    <div style={circleStyle}>
-      <div style={{ fontSize: px(10), color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 }}>
-        {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
-      </div>
-      <div style={{ fontSize: px(38), fontWeight: 300, lineHeight: `${px(44)}px`, letterSpacing: -1 }}>
-        {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-      </div>
-      <div style={{ fontSize: px(14), fontWeight: 500, marginBottom: px(10) }}>
-        {greetingFor(now.getHours())}, {NAME}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: 6, justifyContent: "center" }}>
-        {counts.map((c) => (
-          <span key={c.label} style={chipStyle(c.n > 0)} title={c.tip}>
-            {c.icon} {c.n} {c.label}
-          </span>
-        ))}
+    <div style={{ ...styles.card, width: 470 }}>
+      <div style={styles.gloss} />
+      <div style={styles.content}>
+        <div style={styles.header}>
+          <div style={styles.title}>{greetingFor(now.getHours())}, {NAME}</div>
+          <div style={styles.meta}>
+            {now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+          </div>
+        </div>
+        <div style={{ fontSize: 64, fontWeight: 250, lineHeight: "68px", letterSpacing: -1.5, margin: "2px 0 14px" }}>
+          {now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {stats.map((s) => (
+            <div key={s.label} style={statTile(s.color, s.n > 0)} title={s.tip}>
+              <div style={{ fontSize: 24, fontWeight: 650, lineHeight: "28px", color: s.n > 0 ? INK : INK_FAINT }}>{s.n}</div>
+              <div style={styles.itemDue}>{s.label}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -681,7 +666,7 @@ const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
 
 const CAL_DAYS = 3; // columns shown at once
 const CAL_MAX_OFFSET = 7 - CAL_DAYS; // the server sends 7 days of events
-const PX_PER_HOUR = 24;
+const PX_PER_HOUR = 28;
 const VISIBLE_UNTIL = 19; // the grid shows up to 7 PM; later hours are a scroll away
 const SCROLL_ID = "dd-cal-scroll";
 
@@ -1012,7 +997,7 @@ export const render = ({ data, offline, refreshing, gmailTab, calendarOffset, pi
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
-        <CenterCircle data={data} />
+        <ClockCard data={data} />
       </div>
       <div style={rightWall}>
         <GmailCard
