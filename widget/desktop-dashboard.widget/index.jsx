@@ -759,7 +759,7 @@ const clearNotes = (dispatch) => {
 const notesLink = { fontSize: 11, fontWeight: 500, color: INK_FAINT, cursor: "pointer", userSelect: "none" };
 
 const NotepadCard = ({ loaded, text, version, status, empty, undoText, dispatch }) => (
-  <div style={{ ...styles.card, width: 390, flex: 1, minHeight: 150, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+  <div style={{ ...styles.card, width: 390, flex: 1, minHeight: 150, display: "flex", flexDirection: "column" }}>
     <div style={styles.gloss} />
     <div style={{ ...styles.content, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={styles.header}>
