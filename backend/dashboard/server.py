@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from dashboard.sources import canvas, canvas_grades, github, gmail, google_calendar, gradescope, piazza
@@ -146,6 +146,40 @@ def get_all() -> dict:
     return state
 
 
+# ----- Notepad -----
+# Your notes from the widget's notepad, kept in data/ (never committed). The widget sends the
+# whole text as plain text, which (unlike JSON) needs no extra CORS permission check.
+
+NOTES_FILE = CACHE_FILE.parent / "notes.json"
+MAX_NOTE_CHARS = 100_000
+
+
+@app.get("/api/notes")
+def get_notes() -> dict:
+    if not NOTES_FILE.exists():
+        return {"text": "", "updated_at": None}
+    try:
+        return json.loads(NOTES_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
+        log.warning("Notes file unreadable; starting with empty notes")
+        return {"text": "", "updated_at": None}
+
+
+@app.post("/api/notes")
+async def save_notes(request: Request) -> dict:
+    text = (await request.body()).decode("utf-8", errors="replace")
+    if len(text) > MAX_NOTE_CHARS:
+        raise HTTPException(413, f"Notes are limited to {MAX_NOTE_CHARS:,} characters")
+    saved = {"text": text, "updated_at": now_iso()}
+    # Write a temp file and rename it, so a crash never leaves half-written notes.
+    NOTES_FILE.parent.mkdir(exist_ok=True)
+    temp = NOTES_FILE.with_suffix(".tmp")
+    temp.write_text(json.dumps(saved))
+    temp.replace(NOTES_FILE)
+    return {"updated_at": saved["updated_at"]}
+
+
+# (Must come after /api/notes, or "notes" would be treated as a source name.)
 @app.get("/api/{name}")
 def get_source(name: str) -> dict:
     if name not in state:

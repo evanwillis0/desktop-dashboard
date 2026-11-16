@@ -21,7 +21,26 @@ const loadAll = async (dispatch) => {
   }
 };
 
-export const command = loadAll;
+// Notes are fetched once (then the notepad owns them). If the server is unreachable, try
+// again on the next 15-second cycle; the notepad stays read-only until they arrive.
+let notesLoaded = false;
+
+const loadNotes = async (dispatch) => {
+  if (notesLoaded) return;
+  try {
+    const response = await fetch(`${API}/api/notes`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const saved = await response.json();
+    notesLoaded = true;
+    dispatch({ type: "NOTES_LOADED", text: typeof saved.text === "string" ? saved.text : "" });
+  } catch (error) {
+    // Leave notesLoaded false; retried next cycle.
+  }
+};
+
+export const command = async (dispatch) => {
+  await Promise.all([loadAll(dispatch), loadNotes(dispatch)]);
+};
 
 const MIN_REFRESH_MS = 1200; // keep the refresh animation on at least this long, so it never just flickers
 const DONE_MS = 1800; // how long the bubble says "Updated ✓" afterwards
@@ -45,6 +64,7 @@ const refreshNow = async (dispatch) => {
 export const initialState = {
   data: null, offline: false, refreshing: false, gmailTab: null, calendarOffset: 0, piazzaTab: null,
   refreshStartedAt: null, refreshedAt: null, leftCompact: false, githubOpen: false,
+  messagesView: "gmail", notesLoaded: false, notesText: "", notesVersion: 0, notesStatus: null,
 };
 
 // A refresh started by a click counts as running until it finishes (not just until the next
@@ -79,6 +99,13 @@ export const updateState = (event, previous) => {
       return { ...previous, leftCompact: event.compact, githubOpen: event.compact ? previous.githubOpen : false };
     case "TOGGLE_GITHUB":
       return { ...previous, githubOpen: !previous.githubOpen };
+    case "SET_MESSAGES_VIEW":
+      return { ...previous, messagesView: event.view };
+    case "NOTES_LOADED":
+      // A new version remounts the text box with the saved text.
+      return { ...previous, notesLoaded: true, notesText: event.text, notesVersion: (previous.notesVersion || 0) + 1 };
+    case "NOTES_STATUS":
+      return { ...previous, notesStatus: event.status };
     default:
       return previous;
   }
@@ -612,12 +639,13 @@ const badgeStyle = {
   color: "#fff",
 };
 
-const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
+// Gmail's side of the Messages panel: one tab per inbox.
+const GmailBody = ({ source, selected, onSelect }) => {
   const accounts = (source && source.data && source.data.accounts) || [];
   const account = accounts.find((a) => a.label === selected) || accounts[0];
 
   return (
-    <Card title="Gmail" source={source} refreshing={refreshing} onRefresh={onRefresh} width={390}>
+    <div>
       {!account && <div style={styles.empty}>Loading…</div>}
       {account && (
         <div>
@@ -664,9 +692,77 @@ const GmailCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
           ))}
         </div>
       )}
-    </Card>
+      <SourceWarning source={source} />
+    </div>
   );
 };
+
+// ----- Notepad -----
+// Notes are saved by the dashboard server (data/notes.json), so they survive restarts.
+// The text box is "uncontrolled": the browser owns what you type, and the 15-second redraws
+// never touch it. It's remounted (notesVersion) only when notes are loaded from the server.
+
+const NOTES_SAVE_DELAY_MS = 600; // save this long after you stop typing
+let notesSaveTimer = null;
+
+const saveNotes = (text, dispatch) => {
+  clearTimeout(notesSaveTimer);
+  dispatch({ type: "NOTES_STATUS", status: "saving" });
+  notesSaveTimer = setTimeout(async () => {
+    try {
+      // Plain text (not JSON), so the browser sends it without an extra permission check.
+      const response = await fetch(`${API}/api/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: text,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      dispatch({ type: "NOTES_STATUS", status: "saved" });
+    } catch (error) {
+      dispatch({ type: "NOTES_STATUS", status: "error" });
+    }
+  }, NOTES_SAVE_DELAY_MS);
+};
+
+const NOTES_STATUS_TEXT = { saving: "saving…", saved: "saved ✓", error: "⚠ not saved (server offline?)" };
+
+const NotepadCard = ({ loaded, text, version, status, dispatch }) => (
+  <div style={{ ...styles.card, width: 390, flex: 1, minHeight: 150, display: "flex", flexDirection: "column", boxSizing: "border-box" }}>
+    <div style={styles.gloss} />
+    <div style={{ ...styles.content, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={styles.header}>
+        <div style={styles.title}>Notes</div>
+        <div style={{ ...styles.meta, color: status === "error" ? WARN_AMBER : INK_FAINT }}>
+          {loaded ? NOTES_STATUS_TEXT[status] || "saves as you type" : "loading…"}
+        </div>
+      </div>
+      <textarea
+        key={`notes-${version || 0}`}
+        className="dd-scroll dd-notes"
+        defaultValue={text || ""}
+        // Until the saved notes arrive, typing is blocked so an empty box can't overwrite them.
+        readOnly={!loaded}
+        placeholder={loaded ? "Jot down notes or things to remember…" : "Loading your notes…"}
+        onInput={(event) => saveNotes(event.target.value, dispatch)}
+        spellCheck={true}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          resize: "none",
+          border: "none",
+          outline: "none",
+          borderRadius: 8,
+          padding: "10px 12px",
+          background: TILE,
+          color: INK,
+          font: "inherit",
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}
+      />
+    </div>
+  </div>
+);
 
 // ----- Clock panel: greeting, date, time, today's counts -----
 
@@ -811,14 +907,15 @@ const ClockCard = ({ data, refreshing, refreshDone, onRefresh }) => {
 const PIAZZA_POSTS = 4;
 const INSTRUCTOR_AMBER = "#ffb547";
 
-const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
+// Piazza's side of the Messages panel: one tab per class.
+const PiazzaBody = ({ source, selected, onSelect }) => {
   const classes = (source && source.data && source.data.classes) || [];
   // `selected` may be undefined (fresh state) or a class that's gone: fall back to the first.
   const current = classes.find((c) => c.id === selected) || classes[0];
   const posts = current ? current.posts.slice(0, PIAZZA_POSTS) : [];
 
   return (
-    <Card title="Piazza" source={source} refreshing={refreshing} onRefresh={onRefresh} width={390}>
+    <div>
       {!current && <div style={styles.empty}>{source && source.status === "pending" ? "Loading…" : "No active classes"}</div>}
       {current && (
         <div>
@@ -853,7 +950,62 @@ const PiazzaCard = ({ source, selected, onSelect, refreshing, onRefresh }) => {
           </div>
         </div>
       )}
-    </Card>
+      <SourceWarning source={source} />
+    </div>
+  );
+};
+
+// ----- Messages: Gmail and Piazza in one panel, switched from the header -----
+
+const switchStyle = (active) => ({
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "4px 12px",
+  borderRadius: 8,
+  fontSize: 14,
+  fontWeight: active ? 650 : 500,
+  color: active ? INK : INK_SOFT,
+  background: active ? TILE_ACTIVE : "transparent",
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+});
+
+const MessagesCard = ({ gmail, piazza, view, onView, gmailTab, onGmailTab, piazzaTab, onPiazzaTab, refreshing, onRefresh }) => {
+  const showPiazza = view === "piazza"; // anything else (including missing state) = Gmail
+  const accounts = (gmail && gmail.data && gmail.data.accounts) || [];
+  const classes = (piazza && piazza.data && piazza.data.classes) || [];
+  const gmailUnread = sum(accounts, (a) => a.unread_recent);
+  const piazzaUnread = sum(classes, (c) => c.unread);
+  const source = showPiazza ? piazza : gmail;
+
+  const toggle = (
+    <div style={{ display: "flex", gap: 2, background: TILE, borderRadius: 10, padding: 2, margin: "-4px 0 -4px -2px" }}>
+      <div style={switchStyle(!showPiazza)} onClick={() => onView("gmail")} title="Unread emails, last 7 days">
+        Gmail {gmailUnread > 0 && <span style={badgeStyle}>{badgeText(gmailUnread)}</span>}
+      </div>
+      <div style={switchStyle(showPiazza)} onClick={() => onView("piazza")} title="Unread Piazza posts">
+        Piazza {piazzaUnread > 0 && <span style={badgeStyle}>{badgeText(piazzaUnread)}</span>}
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ ...styles.card, width: 390 }}>
+      <div style={styles.gloss} />
+      <div style={styles.content}>
+        <div style={{ ...styles.header, alignItems: "center" }}>
+          {toggle}
+          <div style={styles.meta}>
+            <span>{refreshing ? "refreshing…" : updatedAgo(source && source.updated_at)}</span>
+            <span style={styles.refresh} onClick={onRefresh} title="Refresh now">↻</span>
+          </div>
+        </div>
+        {showPiazza
+          ? <PiazzaBody source={piazza} selected={piazzaTab} onSelect={onPiazzaTab} />
+          : <GmailBody source={gmail} selected={gmailTab} onSelect={onGmailTab} />}
+      </div>
+    </div>
   );
 };
 
@@ -1135,6 +1287,10 @@ const CalendarCard = ({ source, offset: rawOffset, onOffset, refreshing, onRefre
 const HALLWAY_ANGLE = 7; // degrees the side columns turn toward the middle (subtle)
 const PERSPECTIVE = 1250; // viewing distance in px: smaller = deeper 3D effect (was 1600)
 const SIDE_LIFT = 20; // how much higher the side columns sit than the middle one
+// Right column height: from its (lifted) top to the bottom of the clock panel, i.e. the
+// middle column's height (calendar 0-7 PM at PX_PER_HOUR + clock panel = 745) + SIDE_LIFT.
+// Update it if the calendar or clock panel change height.
+const RIGHT_COLUMN_H = 765;
 
 // ----- Left column fit: GitHub turns into a dropdown when Coursework is too full -----
 
@@ -1184,6 +1340,7 @@ export const className = `
   .dd-scroll::-webkit-scrollbar { width: 4px; }
   .dd-scroll::-webkit-scrollbar-thumb { background: rgba(28, 30, 34, 0.25); border-radius: 2px; }
   .dd-scroll::-webkit-scrollbar-track { background: transparent; }
+  .dd-notes::placeholder { color: rgba(28, 30, 34, 0.4); }
 `;
 
 export const render = (state, dispatch) => {
@@ -1250,20 +1407,27 @@ export const render = (state, dispatch) => {
         />
         <ClockCard data={data} refreshing={refreshing} refreshDone={refreshDone} onRefresh={onRefresh} />
       </div>
-      <div style={rightWall}>
-        <GmailCard
-          source={data && data.gmail}
-          selected={gmailTab}
-          onSelect={(label) => dispatch({ type: "SELECT_GMAIL_TAB", label })}
+      {/* Right: Gmail/Piazza in one panel, then the notepad stretching down to line up with
+          the bottom of the clock panel (so it absorbs the difference when the tabs change). */}
+      <div style={{ ...rightWall, height: RIGHT_COLUMN_H }}>
+        <MessagesCard
+          gmail={data && data.gmail}
+          piazza={data && data.piazza}
+          view={state.messagesView}
+          onView={(view) => dispatch({ type: "SET_MESSAGES_VIEW", view })}
+          gmailTab={gmailTab}
+          onGmailTab={(label) => dispatch({ type: "SELECT_GMAIL_TAB", label })}
+          piazzaTab={piazzaTab}
+          onPiazzaTab={(id) => dispatch({ type: "SELECT_PIAZZA_TAB", id })}
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
-        <PiazzaCard
-          source={data && data.piazza}
-          selected={piazzaTab}
-          onSelect={(id) => dispatch({ type: "SELECT_PIAZZA_TAB", id })}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
+        <NotepadCard
+          loaded={!!state.notesLoaded}
+          text={state.notesText}
+          version={state.notesVersion}
+          status={state.notesStatus}
+          dispatch={dispatch}
         />
       </div>
     </div>
