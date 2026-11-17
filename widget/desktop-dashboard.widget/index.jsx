@@ -107,6 +107,8 @@ export const updateState = (event, previous) => {
                notesVersion: (previous.notesVersion || 0) + 1 };
     case "NOTES_STATUS":
       return { ...previous, notesStatus: event.status };
+    case "LOGIN_STARTED":
+      return { ...previous, loginsStarted: { ...(previous.loginsStarted || {}), [event.site]: event.at } };
     case "NOTES_EMPTY":
       return { ...previous, notesEmpty: event.empty };
     case "NOTES_REPLACE":
@@ -317,8 +319,51 @@ const CardHeader = ({ title, source, refreshing, onRefresh, onTitleClick, hint }
   </div>
 );
 
+// ----- Warnings, with a one-click "Log in again" for expired site logins -----
+
+const LOGIN_NAMES = { canvas: "Canvas", gradescope: "Gradescope", piazza: "Piazza" };
+const LOGIN_WAIT_MS = 5 * 60 * 1000; // the login window gives up after 5 minutes
+
+// Set on every render, so warnings deep inside any panel can start a login and know
+// which logins are under way, without passing these through every component.
+let currentDispatch = null;
+let currentLoginsStarted = {};
+
+const startLogin = async (site) => {
+  if (currentDispatch) currentDispatch({ type: "LOGIN_STARTED", site, at: Date.now() });
+  try {
+    // Plain-text POST: no extra permission check needed. The server opens the login window.
+    await fetch(`${API}/api/login/${site}`, { method: "POST" });
+  } catch (error) {
+    if (currentDispatch) currentDispatch({ type: "LOGIN_STARTED", site, at: null });
+  }
+};
+
+// Shows a warning. "Logged out of <site>. Log in again: <command>" becomes
+// "Logged out of <Site>" with a "Log in again ↗" link (or a reminder while the window is open).
+const WarningLine = ({ text }) => {
+  const match = (text || "").match(/^(.*?)Logged out of (canvas|gradescope|piazza)\b/);
+  if (!match) return <div style={styles.warning}>⚠ {text}</div>;
+  const [, prefix, site] = match;
+  const startedAt = currentLoginsStarted[site];
+  const waiting = Number.isFinite(startedAt) && Date.now() - startedAt < LOGIN_WAIT_MS;
+  return (
+    <div style={styles.warning}>
+      ⚠ {prefix}Logged out of {LOGIN_NAMES[site]}.{" "}
+      {waiting ? (
+        <span>Finish logging in in the Chrome window that opened.</span>
+      ) : (
+        <span style={{ fontWeight: 650, textDecoration: "underline", cursor: "pointer" }}
+              onClick={() => startLogin(site)} title={`Open the ${LOGIN_NAMES[site]} login window`}>
+          Log in again ↗
+        </span>
+      )}
+    </div>
+  );
+};
+
 const SourceWarning = ({ source }) =>
-  source && source.status === "error" ? <div style={styles.warning}>⚠ Couldn't refresh: {source.error}</div> : null;
+  source && source.status === "error" ? <WarningLine text={`Couldn't refresh: ${source.error}`} /> : null;
 
 const GITHUB_BLUE = "#6aa8ff";
 const repoName = (fullName) => fullName.split("/").pop();
@@ -615,9 +660,7 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh,
           tooltip={`Open in ${SOURCE_NAMES[s.source]}`}
         />
       ))}
-      {canvas && canvas.scores_error && (
-        <div style={styles.warning}>⚠ Canvas grades: {canvas.scores_error}</div>
-      )}
+      {canvas && canvas.scores_error && <WarningLine text={`Canvas grades: ${canvas.scores_error}`} />}
       <SourceWarning source={source} />
     </FoldCard>
   );
@@ -1392,6 +1435,8 @@ export const className = `
 export const render = (state, dispatch) => {
   const { data, offline, gmailTab, calendarOffset, piazzaTab } = state;
   const refreshing = isRefreshing(state);
+  currentDispatch = dispatch;
+  currentLoginsStarted = state.loginsStarted || {};
   const compact = !!state.leftCompact; // (both may be missing in state saved by an older version)
   const githubOpen = !!state.githubOpen;
   const refreshDone = !refreshing && Number.isFinite(state.refreshedAt) && Date.now() - state.refreshedAt < DONE_MS + 500;

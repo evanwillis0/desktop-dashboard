@@ -13,6 +13,7 @@ Then open http://127.0.0.1:8787/api/all
 import asyncio
 import json
 import logging
+import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -177,6 +178,41 @@ async def save_notes(request: Request) -> dict:
     temp.write_text(json.dumps(saved))
     temp.replace(NOTES_FILE)
     return {"updated_at": saved["updated_at"]}
+
+
+# ----- "Log in again" from the widget -----
+# Clicking a "Logged out" warning asks the server to open the same login window as
+# `setup_login <site>`. When you finish (or close it), that source is refreshed right away.
+
+LOGIN_SITES = {"canvas", "gradescope", "piazza"}  # same names as setup_login.SITES and SOURCES
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+login_tasks: dict[str, asyncio.Task] = {}
+
+
+async def run_login(site: str) -> None:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "dashboard.setup_login", site,
+        cwd=BACKEND_DIR, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    output, _ = await process.communicate()
+    lines = output.decode(errors="replace").strip().splitlines()
+    log.info("Login window for %s finished: %s", site, lines[-1] if lines else "(no output)")
+    await refresh(site)
+
+
+@app.post("/api/login/{site}")
+async def start_login(site: str, request: Request) -> dict:
+    # Only the dashboard widget may ask (a browser always says which page a request comes from).
+    if request.headers.get("origin") not in WIDGET_ORIGINS:
+        raise HTTPException(403, "Only the dashboard widget can open a login window")
+    if site not in LOGIN_SITES:
+        raise HTTPException(404, f"Unknown site '{site}'")
+    running = login_tasks.get(site)
+    if running and not running.done():
+        return {"status": "already_open"}
+    login_tasks[site] = asyncio.create_task(run_login(site))
+    log.info("Opening login window for %s", site)
+    return {"status": "opened"}
 
 
 # (Must come after /api/notes, or "notes" would be treated as a source name.)
