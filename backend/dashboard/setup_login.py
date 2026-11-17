@@ -10,11 +10,12 @@ soon as the site shows you're logged in, the cookies are saved to the Keychain a
 window closes. Nothing you type is seen or stored by this script.
 """
 
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -39,17 +40,75 @@ SITES = {
 }
 
 
+_last_probe_answer: dict[str, str] = {}
+
+
 def probe_logged_in(browser, site: Site) -> bool:
     """Ask the site itself, using the browser window's cookies, whether we're logged in.
 
-    No redirects are followed: a logged-out visitor gets sent to a login page (3xx)
-    or refused (401/403), while a logged-in one gets the page (200).
+    No redirects are followed. A logged-out visitor is refused (401/403) or sent to a login
+    page; a logged-in one gets the page (200) or is sent somewhere else on the same site
+    (Canvas, for one, may forward /profile to /profile/settings).
     """
     try:
         response = browser.request.get(site.probe_url, max_redirects=0, timeout=10_000)
     except Exception:  # network hiccup mid-login; just try again next round
         return False
-    return response.status == 200
+    status = response.status
+    target = urljoin(site.probe_url, response.headers.get("location", "")) if 300 <= status < 400 else ""
+    target_host, target_path = urlparse(target).hostname or "", urlparse(target).path or ""
+
+    # Note each new answer (status and page path only, never the query, which can hold tokens),
+    # so a login that isn't noticed can be explained from the log.
+    answer = f"HTTP {status}" + (f" -> {target_host}{target_path}" if target else "")
+    if _last_probe_answer.get(site.host) != answer:
+        _last_probe_answer[site.host] = answer
+        print(f"Login check: {answer}", flush=True)
+
+    if status == 200:
+        return True
+    if target:
+        return target_host == site.host and not any(word in target_path.lower() for word in ("login", "sso", "saml"))
+    return False
+
+
+def login_chrome_pid() -> int | None:
+    """The main process of the Chrome running our profile (not your everyday Chrome)."""
+    result = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True)
+    for line in result.stdout.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        if f"--user-data-dir={PROFILE_DIR}" in command and "--type=" not in command:
+            return int(pid)
+    return None
+
+
+# Asks macOS to bring one app (by process id) to the front. Uses AppKit directly, which,
+# unlike System Events, needs no Accessibility permission.
+ACTIVATE_JXA = """
+ObjC.import("AppKit");
+function run(argv) {
+  const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(argv[0]));
+  if (app.isNil()) return "not found";
+  app.activateWithOptions($.NSApplicationActivateAllWindows | $.NSApplicationActivateIgnoringOtherApps);
+  delay(0.5);
+  const front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+  return front.processIdentifier == Number(argv[0]) ? "in front" : "macOS kept another app in front";
+}
+"""
+
+
+def bring_to_front() -> str:
+    """Bring the login window in front of your other windows.
+
+    When the dashboard server opens it (the widget's "Log in again" link), Chrome starts
+    from a background program, and macOS doesn't raise its window by itself.
+    """
+    pid = login_chrome_pid()
+    if not pid:
+        return "Login window: couldn't find it to bring forward."
+    result = subprocess.run(["osascript", "-l", "JavaScript", "-e", ACTIVATE_JXA, str(pid)],
+                            capture_output=True, text=True, timeout=10)
+    return f"Login window: {(result.stdout or result.stderr).strip() or 'no answer'}."
 
 
 def log_in(name: str) -> None:
@@ -66,12 +125,19 @@ def log_in(name: str) -> None:
         )
         page = browser.pages[0] if browser.pages else browser.new_page()
         page.goto(site.start_url)
+        print(bring_to_front())
 
         deadline = time.time() + TIMEOUT_SECONDS
+        last_pages = None
         while time.time() < deadline:
             if not browser.pages:  # you closed the window
                 print("The login window was closed before login finished. Nothing was saved.")
                 return
+            # Note where the window is (host and path only; the rest can hold tokens).
+            pages = ", ".join(f"{urlparse(tab.url).hostname}{urlparse(tab.url).path}" for tab in browser.pages)
+            if pages != last_pages:
+                last_pages = pages
+                print(f"Window is on: {pages}", flush=True)
             # Only ask once you're back on the site (not while on the school login page).
             on_site = any(urlparse(tab.url).hostname == site.host for tab in browser.pages)
             if on_site and probe_logged_in(browser, site):

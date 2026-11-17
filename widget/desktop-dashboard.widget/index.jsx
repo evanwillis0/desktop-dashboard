@@ -350,14 +350,13 @@ const WarningLine = ({ text }) => {
   return (
     <div style={styles.warning}>
       ⚠ {prefix}Logged out of {LOGIN_NAMES[site]}.{" "}
-      {waiting ? (
-        <span>Finish logging in in the Chrome window that opened.</span>
-      ) : (
-        <span style={{ fontWeight: 650, textDecoration: "underline", cursor: "pointer" }}
-              onClick={() => startLogin(site)} title={`Open the ${LOGIN_NAMES[site]} login window`}>
-          Log in again ↗
-        </span>
-      )}
+      {waiting && <span>Finish logging in in the Chrome window that opened. </span>}
+      {/* Always clickable: if the login window is still open, the server brings it to the
+          front; if it was closed, a new one opens. */}
+      <span style={{ fontWeight: 650, textDecoration: "underline", cursor: "pointer" }}
+            onClick={() => startLogin(site)} title={`Open the ${LOGIN_NAMES[site]} login window`}>
+        {waiting ? "Open it again ↗" : "Log in again ↗"}
+      </span>
     </div>
   );
 };

@@ -194,9 +194,13 @@ async def run_login(site: str) -> None:
         sys.executable, "-m", "dashboard.setup_login", site,
         cwd=BACKEND_DIR, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
-    output, _ = await process.communicate()
-    lines = output.decode(errors="replace").strip().splitlines()
-    log.info("Login window for %s finished: %s", site, lines[-1] if lines else "(no output)")
+    # setup_login prints short status lines (never cookies or anything you typed).
+    # Log each as it arrives, so a login that isn't being noticed can be seen while it happens.
+    async for raw in process.stdout:
+        line = raw.decode(errors="replace").strip()
+        if line:
+            log.info("Login window for %s: %s", site, line)
+    await process.wait()
     await refresh(site)
 
 
@@ -209,6 +213,11 @@ async def start_login(site: str, request: Request) -> dict:
         raise HTTPException(404, f"Unknown site '{site}'")
     running = login_tasks.get(site)
     if running and not running.done():
+        # Already open (maybe hidden behind other windows): bring it forward instead.
+        from dashboard.setup_login import bring_to_front
+
+        result = await asyncio.to_thread(bring_to_front)
+        log.info("Login window for %s already open; %s", site, result)
         return {"status": "already_open"}
     login_tasks[site] = asyncio.create_task(run_login(site))
     log.info("Opening login window for %s", site)
