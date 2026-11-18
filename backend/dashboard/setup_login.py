@@ -123,32 +123,42 @@ def log_in(name: str) -> None:
             headless=False,
             no_viewport=True,
         )
+        closed = []  # set when Chrome goes away (window closed or Chrome quit)
+        browser.on("close", lambda _: closed.append(True))
         page = browser.pages[0] if browser.pages else browser.new_page()
         page.goto(site.start_url)
         print(bring_to_front())
 
         deadline = time.time() + TIMEOUT_SECONDS
-        last_pages = None
+        last_urls, last_pages = None, None
         while time.time() < deadline:
-            if not browser.pages:  # you closed the window
+            if closed or not browser.pages:  # you closed the window or quit Chrome
                 print("The login window was closed before login finished. Nothing was saved.")
                 return
-            # Note where the window is (host and path only; the rest can hold tokens).
-            pages = ", ".join(f"{urlparse(tab.url).hostname}{urlparse(tab.url).path}" for tab in browser.pages)
-            if pages != last_pages:
-                last_pages = pages
-                print(f"Window is on: {pages}", flush=True)
+            # Note where the window is (host and path only; the rest can hold tokens). The same
+            # page moving on (e.g. the school login after you submit) shows as "next step".
+            urls = [tab.url for tab in browser.pages]
+            if urls != last_urls:
+                pages = ", ".join(f"{urlparse(u).hostname}{urlparse(u).path}" for u in urls)
+                print(f"Window is on: {pages}" + (" (next step)" if pages == last_pages else ""), flush=True)
+                last_urls, last_pages = urls, pages
             # Only ask once you're back on the site (not while on the school login page).
-            on_site = any(urlparse(tab.url).hostname == site.host for tab in browser.pages)
+            on_site = any(urlparse(u).hostname == site.host for u in urls)
             if on_site and probe_logged_in(browser, site):
                 break
-            time.sleep(2)
+            # Wait through Playwright, not time.sleep: Playwright only learns what the window
+            # did (moved to Canvas, got closed) while it's being called. With a plain sleep,
+            # the window's address never updated here, so a finished login went unnoticed.
+            try:
+                browser.pages[0].wait_for_timeout(2000)
+            except Exception:  # that tab closed mid-wait; the next round sees what's left
+                time.sleep(0.5)
         else:
             browser.close()
             print("Timed out after 5 minutes without finishing login. Nothing was saved.")
             return
 
-        time.sleep(2)  # let the site finish setting its cookies
+        page.wait_for_timeout(2000) if not page.is_closed() else time.sleep(2)  # let the site finish setting cookies
         domain = site.host.removeprefix("www.")
         cookies = [c for c in browser.cookies() if c["domain"].lstrip(".").endswith(domain)]
         browser.close()
