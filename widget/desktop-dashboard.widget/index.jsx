@@ -38,8 +38,37 @@ const loadNotes = async (dispatch) => {
   }
 };
 
+// Canvas assignments you've marked as submitted (the feed can't tell). Re-read every cycle,
+// so a change made elsewhere (say, the dashboard open in a browser) shows up here too.
+const loadSubmitted = async (dispatch) => {
+  try {
+    const response = await fetch(`${API}/api/submitted`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    if (Array.isArray(body.urls)) dispatch({ type: "SUBMITTED", urls: body.urls });
+  } catch (error) {
+    // Keep the marks we have; retried next cycle.
+  }
+};
+
+const setSubmitted = async (url, submitted, dispatch) => {
+  dispatch({ type: "SUBMITTED_TOGGLE", url, submitted }); // show it right away
+  try {
+    const response = await fetch(`${API}/api/submitted`, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" }, // plain text: no extra permission check
+      body: JSON.stringify({ url, submitted }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    if (Array.isArray(body.urls)) dispatch({ type: "SUBMITTED", urls: body.urls });
+  } catch (error) {
+    loadSubmitted(dispatch); // didn't save: go back to what the server has
+  }
+};
+
 export const command = async (dispatch) => {
-  await Promise.all([loadAll(dispatch), loadNotes(dispatch)]);
+  await Promise.all([loadAll(dispatch), loadNotes(dispatch), loadSubmitted(dispatch)]);
 };
 
 const MIN_REFRESH_MS = 1200; // keep the refresh animation on at least this long, so it never just flickers
@@ -107,6 +136,13 @@ export const updateState = (event, previous) => {
                notesVersion: (previous.notesVersion || 0) + 1 };
     case "NOTES_STATUS":
       return { ...previous, notesStatus: event.status };
+    case "SUBMITTED":
+      return { ...previous, submittedUrls: event.urls };
+    case "SUBMITTED_TOGGLE": {
+      const current = Array.isArray(previous.submittedUrls) ? previous.submittedUrls : [];
+      const others = current.filter((u) => u !== event.url);
+      return { ...previous, submittedUrls: event.submitted ? [...others, event.url] : others };
+    }
     case "LOGIN_STARTED":
       return { ...previous, loginsStarted: { ...(previous.loginsStarted || {}), [event.site]: event.at } };
     case "NOTES_EMPTY":
@@ -519,14 +555,17 @@ const combineSources = (named) => {
   };
 };
 
-const upcomingItems = (canvas, gradescope) => {
+// `marked`: links of Canvas assignments you've marked as submitted (Gradescope knows on its own).
+const upcomingItems = (canvas, gradescope, marked) => {
+  const markedSet = new Set(Array.isArray(marked) ? marked : []);
   const fromGradescope = ((gradescope && gradescope.assignments) || [])
     .filter((a) => a.open)
     .map((a) => ({ key: `gs-${a.key}`, source: "gradescope", title: a.title, course: courseKey(a.course),
                    due: a.due_at, allDay: false, url: a.url, status: a.status, isNew: a.is_new }));
   const fromCanvas = ((canvas && canvas.assignments) || [])
     .map((a) => ({ key: `cv-${a.url}`, source: "canvas", title: a.title, course: courseKey(a.course),
-                   due: a.due, allDay: a.all_day, url: a.url, status: null, isNew: false }))
+                   due: a.due, allDay: a.all_day, url: a.url, isNew: false, markable: true,
+                   status: markedSet.has(a.url) ? "submitted" : null }))
     // Some classes post the same assignment on both sites; keep the Gradescope copy (it knows if you submitted).
     .filter((c) => !fromGradescope.some((g) => g.course === c.course && sameTitle(g.title, c.title)));
   return [...fromGradescope, ...fromCanvas].sort((a, b) => new Date(a.due) - new Date(b.due));
@@ -576,10 +615,31 @@ const COURSE_ROW_GAP = 6;
 const courseRowTitle = { ...styles.itemTitle, ...styles.oneLine, lineHeight: "16px" };
 const courseRowDue = { ...styles.itemDue, ...styles.oneLine, lineHeight: "14px" };
 
-const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh, folded, onUnfold }) => {
+// The small round "mark as submitted" button on Canvas rows (Gradescope rows know on their own).
+const MARK_SIZE = 22;
+const markButtonStyle = (done) => ({
+  position: "absolute",
+  right: 10,
+  top: (COURSE_ROW_H - MARK_SIZE) / 2,
+  width: MARK_SIZE,
+  height: MARK_SIZE,
+  boxSizing: "border-box",
+  borderRadius: MARK_SIZE / 2,
+  border: `1.5px solid ${done ? OK_GREEN : "rgba(28, 30, 34, 0.35)"}`,
+  background: done ? OK_GREEN : "transparent",
+  color: done ? "#fff" : "rgba(28, 30, 34, 0.35)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+});
+
+const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh, folded, onUnfold, marked, onMark }) => {
   const canvas = canvasSource && canvasSource.data;
   const gradescope = gradescopeSource && gradescopeSource.data;
-  const upcoming = upcomingItems(canvas, gradescope);
+  const upcoming = upcomingItems(canvas, gradescope, marked);
   const scores = scoreItems(canvas, gradescope);
   // Overall class scores from Canvas, keyed the same way as everything else ("CMSC250").
   const grades = {};
@@ -632,6 +692,7 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh,
               {items.map((item) => (
                 <div key={item.key}
                      style={{ ...styles.item, height: COURSE_ROW_H, boxSizing: "border-box", marginBottom: COURSE_ROW_GAP,
+                              position: "relative", paddingRight: item.markable ? MARK_SIZE + 18 : 10,
                               borderLeft: `3px solid ${item.status === "submitted" ? "#7fd49b" : urgencyColor(item.due)}` }}
                      onClick={() => openLink(item.url, item.source)} title={`Open in ${SOURCE_NAMES[item.source]}`}>
                   <div style={courseRowTitle}>
@@ -641,6 +702,18 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh,
                   <div style={courseRowDue}>
                     {SOURCE_NAMES[item.source]} · {itemDueLabel(item)}{item.status === "submitted" ? " · ✓ submitted" : ""}
                   </div>
+                  {item.markable && (
+                    <div
+                      style={markButtonStyle(item.status === "submitted")}
+                      title={item.status === "submitted" ? "Marked as submitted (click to undo)" : "Mark as submitted"}
+                      onClick={(event) => {
+                        event.stopPropagation(); // don't also open the assignment
+                        onMark(item.url, item.status !== "submitted");
+                      }}
+                    >
+                      ✓
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -933,13 +1006,13 @@ const RefreshBubble = ({ busy, done, onRefresh }) => (
   </div>
 );
 
-const ClockCard = ({ data, refreshing, refreshDone, onRefresh }) => {
+const ClockCard = ({ data, refreshing, refreshDone, onRefresh, marked }) => {
   const now = new Date();
   const source = (name) => (data && data[name] && data[name].data) || null;
 
   const accounts = (source("gmail") || {}).accounts || [];
   const classes = (source("piazza") || {}).classes || [];
-  const soon = upcomingItems(source("canvas"), source("gradescope")).filter((item) => {
+  const soon = upcomingItems(source("canvas"), source("gradescope"), marked).filter((item) => {
     const hoursLeft = (new Date(item.due) - now) / 3600000;
     return item.status !== "submitted" && hoursLeft > 0 && hoursLeft <= SOON_HOURS;
   });
@@ -1476,6 +1549,8 @@ export const render = (state, dispatch) => {
           onRefresh={onRefresh}
           folded={compact && githubOpen}
           onUnfold={() => dispatch({ type: "TOGGLE_GITHUB" })}
+          marked={state.submittedUrls}
+          onMark={(url, submitted) => setSubmitted(url, submitted, dispatch)}
         />
         <GitHubCard
           source={data && data.github}
@@ -1495,7 +1570,8 @@ export const render = (state, dispatch) => {
           refreshing={refreshing}
           onRefresh={onRefresh}
         />
-        <ClockCard data={data} refreshing={refreshing} refreshDone={refreshDone} onRefresh={onRefresh} />
+        <ClockCard data={data} refreshing={refreshing} refreshDone={refreshDone} onRefresh={onRefresh}
+                   marked={state.submittedUrls} />
       </div>
       {/* Right: Gmail/Piazza in one panel, then the notepad stretching down to line up with
           the bottom of the clock panel (so it absorbs the difference when the tabs change). */}

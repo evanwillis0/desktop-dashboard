@@ -17,7 +17,7 @@ import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -178,6 +178,54 @@ async def save_notes(request: Request) -> dict:
     temp.write_text(json.dumps(saved))
     temp.replace(NOTES_FILE)
     return {"updated_at": saved["updated_at"]}
+
+
+# ----- Canvas assignments you've marked as submitted -----
+# Canvas's calendar feed doesn't say what you've turned in, so the widget lets you mark it.
+# Saved in data/ (never committed) as {assignment link: when you marked it}.
+
+SUBMITTED_FILE = CACHE_FILE.parent / "submitted.json"
+SUBMITTED_KEEP_DAYS = 90  # forget marks older than this (the assignment is long gone)
+
+
+def load_submitted() -> dict[str, str]:
+    try:
+        return json.loads(SUBMITTED_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@app.get("/api/submitted")
+def get_submitted() -> dict:
+    return {"urls": sorted(load_submitted())}
+
+
+@app.post("/api/submitted")
+async def set_submitted(request: Request) -> dict:
+    """Body (sent as plain text): {"url": "<assignment link>", "submitted": true or false}."""
+    if request.headers.get("origin") not in WIDGET_ORIGINS:
+        raise HTTPException(403, "Only the dashboard widget can change this")
+    try:
+        body = json.loads(await request.body())
+        url, submitted = body["url"], bool(body["submitted"])
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(400, 'Expected {"url": ..., "submitted": true/false}')
+    if not isinstance(url, str) or not url.startswith("https://") or len(url) > 500:
+        raise HTTPException(400, "Expected an assignment link")
+
+    marks = load_submitted()
+    if submitted:
+        marks[url] = now_iso()
+    else:
+        marks.pop(url, None)
+    cutoff = (datetime.now().astimezone() - timedelta(days=SUBMITTED_KEEP_DAYS)).isoformat()
+    marks = {u: when for u, when in marks.items() if when >= cutoff}
+
+    SUBMITTED_FILE.parent.mkdir(exist_ok=True)
+    temp = SUBMITTED_FILE.with_suffix(".tmp")
+    temp.write_text(json.dumps(marks, indent=2))
+    temp.replace(SUBMITTED_FILE)
+    return {"urls": sorted(marks)}
 
 
 # ----- "Log in again" from the widget -----
