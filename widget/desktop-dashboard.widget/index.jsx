@@ -700,7 +700,8 @@ const CourseworkCard = ({ canvasSource, gradescopeSource, refreshing, onRefresh,
                     {item.title}
                   </div>
                   <div style={courseRowDue}>
-                    {SOURCE_NAMES[item.source]} · {itemDueLabel(item)}{item.status === "submitted" ? " · ✓ submitted" : ""}
+                    {SOURCE_NAMES[item.source]} · {itemDueLabel(item)}
+                    {item.status === "submitted" && <span style={{ color: OK_GREEN, fontWeight: 600 }}> · ✓ submitted</span>}
                   </div>
                   {item.markable && (
                     <div
@@ -800,9 +801,12 @@ const GmailBody = ({ source, selected, onSelect }) => {
           {!account.error && account.messages.length === 0 && (
             <div style={styles.allClear}>✓ No mail in the last 7 days</div>
           )}
-          {account.messages.slice(0, 5).map((m) => (
+          {account.messages.slice(0, 5).map((m, i) => (
             <div
-              key={`${m.url}-${m.received_at}`}  // two emails in one conversation share a URL
+              // Each row needs a unique key, or React mixes up rows when you switch tabs (the
+              // "same emails on every tab" bug). The email's own id is unique; link + time wasn't
+              // (several messages in one conversation can arrive at the same moment).
+              key={`${account.label}-${m.id || `${m.url}-${m.received_at}-${i}`}`}
               style={{ ...styles.item, borderLeft: `3px solid ${m.unread ? GITHUB_BLUE : NEUTRAL_EDGE}` }}
               onClick={() => openInProfile(m.url, account.chrome_profile)}
               title={m.snippet}

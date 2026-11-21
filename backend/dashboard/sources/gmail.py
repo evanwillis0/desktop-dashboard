@@ -26,7 +26,8 @@ RECENT_QUERY = "in:inbox newer_than:7d -category:promotions -category:social"
 UNREAD_QUERY = RECENT_QUERY + " is:unread"
 # Same filters, last 24 hours only (for the "new emails" count in the center circle).
 UNREAD_TODAY_QUERY = "in:inbox newer_than:1d is:unread -category:promotions -category:social"
-MAX_MESSAGES = 6  # shown on the card
+MAX_MESSAGES = 6  # conversations sent to the card
+LIST_SIZE = 25  # recent messages looked at to find MAX_MESSAGES separate conversations
 MAX_COUNTED = 100  # unread counts above this show as "99+"
 
 # Tab names shown on the card.
@@ -75,9 +76,17 @@ def fetch_account(label: str) -> dict:
             today.raise_for_status()
             result["unread_today"] = len(today.json().get("messages", []))
 
-            recent = client.get("/messages", params={"q": RECENT_QUERY, "maxResults": MAX_MESSAGES})
+            # One row per conversation: several messages in one thread (often arriving at the
+            # same moment) would otherwise fill the card with copies of the same email.
+            recent = client.get("/messages", params={"q": RECENT_QUERY, "maxResults": LIST_SIZE})
             recent.raise_for_status()
-            ids = [m["id"] for m in recent.json().get("messages", [])]
+            ids, seen_threads = [], set()
+            for m in recent.json().get("messages", []):  # newest first
+                if m["threadId"] not in seen_threads:
+                    seen_threads.add(m["threadId"])
+                    ids.append(m["id"])
+                if len(ids) == MAX_MESSAGES:
+                    break
 
             for message_id in ids:
                 message = client.get(
@@ -99,6 +108,7 @@ def parse_message(message: dict, email: str) -> dict:
     headers = {h["name"].lower(): h["value"] for h in message.get("payload", {}).get("headers", [])}
     received = datetime.fromtimestamp(int(message["internalDate"]) / 1000, tz=timezone.utc)
     return {
+        "id": message["id"],  # unique per email (the widget uses it to tell rows apart)
         "from": sender_name(headers.get("from", "")),
         "subject": headers.get("subject") or "(no subject)",
         "snippet": message.get("snippet", ""),
